@@ -38,6 +38,23 @@ code in `src/gistic_compare/plotting/` only supplies content.
 - Sample sizes are annotated (`theme.annot_n`) from counts recorded at load
   time (`cfg["_n_samples"]`).
 - Paired/unpaired status of a comparison is printed in the figure footnote.
+
+## Point labels on crowded scatters (scheme A)
+
+Label placement follows one rule everywhere:
+
+- **Black rings** mark the pre-specified loci/bands from your `loci_set`
+  preset (`ring_max_per_label` rings only the strongest row per label so
+  thick clouds don't turn into rings on rings).
+- **Text labels** go to the strongest *generic* points (ranked by the panel's
+  evidence axis, e.g. −log10 FDR or |Δfreq|), capped by the budget
+  `output.figure.annotate_top_k` (default 14), placed with screen-space
+  collision avoidance.
+
+Applied to: CF E-value volcano + required-effect scatter, GS volcano (band /
+window), GS genome Manhattan panels, P1 unique-peak genome, P2 McNemar
+volcano.
+
 - No descriptive titles inside figures — keep captions in your manuscript.
 
 ## OncoPrint (P1)

@@ -200,9 +200,10 @@ def plot_p1_unique_genome(unique: pd.DataFrame, cfg: dict[str, Any]) -> None:
                 ys_all.extend(s["neglogq"].tolist())
                 labs_all.extend(
                     _label_series(s, ["cytoband"], "peak_id"))
-            # label each peak (cytoband), collision-skipped if dense
+            # label peaks (cytoband), strongest first, budgeted
             _annotate_labeled_points(ax, xs_all, ys_all, labs_all,
-                                     fontsize=5.5, min_sep_pt=20)
+                                     fontsize=5.5, min_sep_pt=20,
+                                     max_labels=_top_k(cfg))
             ax.set_xlim(0, x_max * 1.01)
             ax.set_ylim(bottom=0)
             ax.set_title(f"only in {theme.cohort_label(cfg, who)}",

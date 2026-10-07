@@ -157,6 +157,9 @@ to exactly what produced it.
 
 Figures follow a publication theme (Okabe-Ito palette, Arial, capped
 double-column width, Wilson CIs, BH-FDR annotations) — see `docs/figures.md`.
+Crowded scatters follow one labelling rule: black rings mark the
+pre-specified loci/bands from your `loci_set` preset, text labels go to the
+strongest generic points, capped by `output.figure.annotate_top_k` (default 14).
 The P1 OncoPrint shows per-sample 0/1/2 calls on union peaks (grey = that
 cohort did not call a peak there) with the cohort-coloured Δ-frequency strip
 alongside.

@@ -131,7 +131,8 @@ def plot_p2_mcnemar_volcano(mcnemar: pd.DataFrame,
             ys_all.append(float(yi))
             labs_all.append(lab)
     _annotate_labeled_points(ax, xs_all, ys_all, labs_all,
-                             fontsize=5.0, min_sep_pt=17)
+                             fontsize=5.0, min_sep_pt=17,
+                             max_labels=_top_k(cfg))
     if not m["delta_freq"].isna().all():
         ax.axvline(0, color="#888888", ls="--", lw=0.7)
     ax.axhline(-np.log10(0.05), color="#888888", ls=":", lw=0.7)

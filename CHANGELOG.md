@@ -21,13 +21,19 @@ First open-source release. Reorganized from the internal
 - **Union-peak OncoPrint** (`P1_onco_calls.tsv` + `P1_oncoprint[_<comp>]`
   figures): per-sample 0/1/2 calls across cohorts with a Δfreq strip;
   grey encodes "no significant peak called in that cohort".
+- **Scheme-A labelling** for crowded scatters (`output.figure.annotate_top_k`,
+  default 14): pre-specified loci/bands render as black rings instead of
+  text labels so they cannot crowd out the strongest generic signals, which
+  get collision-safe labels. Applied to the CF volcano / required-effect
+  scatter, GS volcano and genome Manhattan panels, P1 unique-peak genome,
+  and the P2 McNemar volcano.
 - Preset system: paper-/study-specific values moved out of code into YAML
   (`presets/reference_panels/*.yaml` for module G, `presets/loci_sets/*.yaml`
   for P4/P5/GS/CF locus annotations). Unconfigured = fully generic runs.
 - Bundled hg19 cytoband + refgene TSVs (`src/gistic_compare/data/refs/`) with
   `scripts/build_refs.py` to regenerate them from GISTIC's `hg19.mat`;
   user-supplied `.mat`/TSV paths still take precedence.
-- Test suite (27 tests): parsers, config topology, interval matching, stats
+- Test suite (37 tests): parsers, config topology, interval matching, stats
   helpers, and both workflows end-to-end on a synthetic GISTIC bundle
   (`tests/synth.py`, incl. a MATLAB v7.3 `D.cap1.5.mat`).
 - Packaging metadata, MIT license, bilingual README (EN/中文), CONTRIBUTING,

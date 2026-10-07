@@ -158,6 +158,7 @@ def _label_series(df: pd.DataFrame, cols: list[str],
 def _annotate_labeled_points(ax, xs, ys, labels,
                              fontsize: float = 4.8,
                              min_sep_pt: float = 16.0,
+                             max_labels: int | None = None,
                              offsets: tuple[tuple[float, float], ...] = (
                                  (4, 4), (4, -8), (-4, 4), (-4, -8),
                                  (8, 0), (-8, 0), (0, 10), (0, -12))) -> None:
@@ -165,8 +166,11 @@ def _annotate_labeled_points(ax, xs, ys, labels,
 
     Labels that would overlap an already-placed one are dropped, which keeps
     dense scatters readable. ``min_sep_pt`` is a *physical* separation in
-    points: it is converted to display pixels with the live dpi so that the
-    guard does not silently shrink (and stop working) at 600 dpi export.
+    points: it is converted to display pixels with the live dpi so that
+    the guard does not silently shrink (and stop working) at 600 dpi export.
+    Points are considered in descending-y order so strong signals get their
+    labels first; ``max_labels`` caps the number of labels regardless of
+    collisions (the ``output.figure.annotate_top_k`` budget).
     """
     if len(xs) == 0:
         return
@@ -178,6 +182,8 @@ def _annotate_labeled_points(ax, xs, ys, labels,
     placed: list[tuple[float, float]] = []
     # draw high-signal points first (larger y) so they win label space
     order = np.argsort(-np.asarray(ys, dtype=float))
+    if max_labels is not None and len(order) > max_labels:
+        order = order[:max_labels]
     for oi in order:
         x, y = float(np.asarray(xs)[oi]), float(np.asarray(ys)[oi])
         lab = str(np.asarray(labels)[oi]).strip()
@@ -222,6 +228,73 @@ def _annotate_labeled_points(ax, xs, ys, labels,
         placed.append((txt_disp[0] + w_px, txt_disp[1]))
 
 
+def _top_k(cfg) -> int:
+    """Point-label budget from ``output.figure.annotate_top_k`` (default 14)."""
+    return int(theme.figure_cfg(cfg).get("annotate_top_k", 14))
+
+
+def preset_rings_and_top_labels(ax, xs, ys, labels, cfg,
+                                preset_mask=None, top_k: int | None = None,
+                                fontsize: float = 5.0,
+                                order_key=None,
+                                ring_color: str = "#1A1A1A",
+                                ring_lw: float = 0.9,
+                                ring_s: float | None = None,
+                                ring_max_per_label: bool = False) -> dict:
+    """Scheme-A point annotation for preset loci/bands.
+
+    Pre-specified points (``preset_mask``) get a **black ring** instead of
+    text so they cannot crowd out the strongest signals; the strongest
+    non-preset points (ranked by ``order_key``, descending; default = |y|)
+    get collision-safe text labels, up to
+    ``output.figure.annotate_top_k`` (default 14).
+
+    ``ring_max_per_label``: instead of ringing every pre-specified row,
+    ring only the strongest row (by ``order_key``) **per distinct label** —
+    appropriate when preset bands appear in many rows of the same panel.
+
+    Returns ``dict(ringed=..., labeled=...)`` for footnote text.
+    """
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    labels = np.asarray([str(x) for x in labels])
+    n = len(xs)
+    if n == 0:
+        return dict(ringed=0, labeled=0)
+    finite = np.isfinite(xs) & np.isfinite(ys)
+    pm = (np.asarray(preset_mask, dtype=bool) if preset_mask is not None
+          else np.zeros(n, dtype=bool))
+    order = (np.asarray(order_key, dtype=float) if order_key is not None
+             else np.abs(ys))
+
+    ringed = 0
+    if pm.any():
+        sel = pm & finite
+        if sel.any() and ring_max_per_label:
+            ring_idx = []
+            for lab in np.unique(labels[sel]):
+                grp = np.flatnonzero(sel & (labels == lab))
+                ring_idx.append(grp[np.argmax(order[grp])])
+            sel = np.zeros(n, dtype=bool)
+            sel[np.asarray(ring_idx, int)] = True
+        if sel.any():
+            if ring_s is None:
+                ring_s = float(plt.rcParams.get("lines.markersize", 6) ** 2) * 1.6
+            ax.scatter(xs[sel], ys[sel], s=ring_s, facecolors="none",
+                       edgecolors=ring_color, linewidths=ring_lw, zorder=5)
+            ringed = int(sel.sum())
+
+    if top_k is None:
+        top_k = _top_k(cfg)
+    cand = np.flatnonzero((~pm) & finite & (np.char.strip(labels) != ""))
+    if len(cand) > top_k:
+        cand = cand[np.argsort(-order[cand])][:top_k]
+    if len(cand):
+        _annotate_labeled_points(ax, xs[cand], ys[cand], labels[cand],
+                                 fontsize=fontsize)
+    return dict(ringed=ringed, labeled=int(len(cand)))
+
+
 __all__ = [
     "Any",
     "FuncFormatter",
@@ -241,11 +314,13 @@ __all__ = [
     "_palette",
     "_pc",
     "_sides",
+    "_top_k",
     "matplotlib",
     "np",
     "out_fig",
     "pd",
     "plt",
+    "preset_rings_and_top_labels",
     "save",
     "sns",
     "stats",

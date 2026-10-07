@@ -49,19 +49,21 @@ def plot_cf_required_effect(sens: pd.DataFrame, cfg: dict[str, Any]) -> None:
         ax.scatter(np.abs(s["diff"]), np.abs(s["required_effect"]),
                    s=14, alpha=0.7, color=cmap[c], label=c,
                    edgecolor="none", zorder=2)
-    # one label per paper locus, at its largest |Dfreq|: iterating every row
-    # would re-plot the same 4 names thousands of times on top of each other
-    pap = d[d["band"].isin(_preset_bands(cfg))].copy()
-    if not pap.empty:
-        pap["_ad"] = pap["diff"].abs()
-        pap = (pap.sort_values("_ad", ascending=False)
-                  .drop_duplicates("band"))
-        for k, (_, r) in enumerate(pap.iterrows()):
-            dx, dy = (5, 4) if k % 2 == 0 else (5, -9)
-            ax.annotate(str(r["band"]),
-                        (abs(float(r["diff"])), abs(float(r["required_effect"]))),
-                        fontsize=5.5, color="#333333",
-                        xytext=(dx, dy), textcoords="offset points", zorder=3)
+    # scheme A: black rings on pre-specified bands (one per band, at its
+    # largest |Δfreq|), text on the strongest generic findings
+    preset_names = _preset_bands(cfg)
+    if preset_names:
+        pm = d["band"].isin(preset_names).to_numpy()
+        info = preset_rings_and_top_labels(
+            ax, np.abs(d["diff"].to_numpy(dtype=float)),
+            np.abs(d["required_effect"].to_numpy(dtype=float)),
+            d["band"].astype(str).to_numpy(), cfg,
+            preset_mask=pm, ring_max_per_label=True,
+            order_key=np.abs(d["diff"].to_numpy(dtype=float)),
+            fontsize=5.5, ring_s=24)
+        if info["ringed"]:
+            theme.annot_n(ax, "○ = pre-specified bands", loc="lower left",
+                          color="#666666")
     comp0 = str(d["comparison"].iloc[0]) if "comparison" in d.columns else ""
     la, lb, _, _ = _sides(cfg, comp0)
     ax.set_yscale("log")
@@ -94,24 +96,16 @@ def plot_cf_evalue_volcano(ev_rr: pd.DataFrame, cfg: dict[str, Any]) -> None:
                     cmap="viridis", s=16, alpha=0.8, edgecolor="none")
     ax.axvline(1.0, color="#888888", lw=0.8, ls=":")
 
-    # label each preset band once (at its strongest finding), plus the top
-    # few generic findings; collision avoidance drops overlapping labels
-    preset = _preset_bands(cfg)
-    lab = d[d["band"].isin(preset)] if preset else d.iloc[0:0]
-    lab = (lab.sort_values("y", ascending=False)
-              .groupby("band", as_index=False).head(1))
-    n_top = max(0, 14 - len(lab))
-    top = (d.sort_values("y", ascending=False)
-            .head(n_top + len(lab)))  # extra head-room for duplicates
-    top = top[~top["band"].isin(set(preset))]
-    top = top[~top["band"].isin(set(lab["band"]))].head(n_top)
-    ann = pd.concat([lab, top]).drop_duplicates(subset=["band"], keep="first")
-    ann = ann[ann["band"].astype(str) != ""]
-    if not ann.empty:
-        from ._core import _annotate_labeled_points
-        _annotate_labeled_points(ax, ann["rr"].to_numpy(dtype=float),
-                                 ann["y"].to_numpy(dtype=float),
-                                 ann["band"].tolist(), fontsize=5.5)
+    # scheme A: black rings on pre-specified bands, text on the strongest
+    # generic findings (budget: output.figure.annotate_top_k)
+    preset_names = _preset_bands(cfg)
+    info = preset_rings_and_top_labels(
+        ax, d["rr"].to_numpy(dtype=float), d["y"].to_numpy(dtype=float),
+        d["band"].astype(str).to_numpy(), cfg,
+        preset_mask=(d["band"].isin(preset_names).to_numpy()
+                     if preset_names else None),
+        order_key=d["y"].to_numpy(dtype=float),
+        fontsize=5.5, ring_s=24)
 
     cbar = fig.colorbar(sc, ax=ax, shrink=0.6)
     cbar.set_label("E-value (RR scale)", fontsize=7)
@@ -122,7 +116,10 @@ def plot_cf_evalue_volcano(ev_rr: pd.DataFrame, cfg: dict[str, Any]) -> None:
                   else "risk ratio")
     ax.set_ylabel("−log10  MW FDR")
     ax.set_title("generic E-value per finding (Tier 1)", fontsize=8)
-    theme.annot_n(ax, f"n = {len(d)} findings", loc="lower right")
+    note = f"n = {len(d)} findings"
+    if info["ringed"]:
+        note += ";  ○ = pre-specified bands"
+    theme.annot_n(ax, note, loc="lower right")
     theme.finalize(fig, "tight")
     save(fig, cfg, "CF_evalue_volcano")
 

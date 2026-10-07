@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 from ._core import *  # noqa: F401,F403
 
@@ -36,10 +37,25 @@ def plot_gs_genome(df, cfg, direction, unit, prefix="GS"):
         ax.scatter(sg["x"], sg[ycol], s=9, color=col, edgecolor="none",
                    zorder=3)
     ax.axhline(0, color="#777777", lw=0.6, ls=":", zorder=1)
-    for _, r in d[d["paper_locus"] != ""].iterrows():
-        ax.annotate(str(r["paper_locus"]), (float(r["x"]), float(r[ycol])),
-                    fontsize=5, xytext=(0, 3), textcoords="offset points",
-                    ha="center", color="#333333", zorder=4)
+    # scheme A: per preset locus, ring + name at its strongest |dG| only
+    d["_absG"] = d[ycol].abs()
+    ann = (d[d["paper_locus"] != ""]
+           .sort_values("_absG", ascending=False)
+           .groupby("paper_locus", as_index=False).head(1))
+    if not ann.empty:
+        mask = pd.Series(False, index=d.index)
+        mask.loc[ann.index] = True
+        preset_rings_and_top_labels(
+            ax, ann["x"].to_numpy(dtype=float),
+            ann.loc[ann.index, ycol].to_numpy(dtype=float),
+            ann["paper_locus"].tolist(), cfg,
+            preset_mask=np.ones(len(ann), dtype=bool), top_k=0, ring_s=20)
+        for _, r in ann.iterrows():
+            ax.annotate(str(r["paper_locus"]),
+                        (float(r["x"]), float(r[ycol])),
+                        fontsize=5, xytext=(0, 4), textcoords="offset points",
+                        ha="center", color="#333333", zorder=6)
+    d = d.drop(columns="_absG")
     bnds = _chrom_bounds(d)
     ax.set_xticks([b for b, _ in bnds])
     ax.set_xticklabels([c.replace("chr", "") for _, c in bnds], fontsize=5)
@@ -74,22 +90,29 @@ def plot_gs_volcano(df, cfg, unit, prefix="GS"):
         ax.scatter(s["dG_" + d], s["y"], s=6, color="#CFCFCF", edgecolor="none")
         ax.scatter(sig["dG_" + d], sig["y"], s=9, color=col, edgecolor="none")
         ax.axvline(0, color="#777777", lw=0.6, ls=":")
-        # one label per preset locus (its strongest point), collision-safe
+        # scheme A: black rings on pre-specified loci/bands, text on the
+        # strongest generic units (budget: output.figure.annotate_top_k)
         ann = (s[s["paper_locus"] != ""]
                .sort_values("y", ascending=False)
                .groupby("paper_locus", as_index=False).head(1))
+        mask = pd.Series(False, index=s.index)
         if not ann.empty:
-            from ._core import _annotate_labeled_points
-            _annotate_labeled_points(ax, ann["dG_" + d].to_numpy(dtype=float),
-                                     ann["y"].to_numpy(dtype=float),
-                                     ann["paper_locus"].tolist(),
-                                     fontsize=5)
+            mask.loc[ann.index] = True
+        info = preset_rings_and_top_labels(
+            ax, s["dG_" + d].to_numpy(dtype=float),
+            s["y"].to_numpy(dtype=float),
+            s["unit"].astype(str).to_numpy(), cfg,
+            preset_mask=mask.to_numpy(),
+            order_key=s["y"].to_numpy(dtype=float),
+            fontsize=5, ring_s=18)
         ax.set_xlabel(f"\u0394G ({direction})  [A \u2212 B]")
         ax.set_ylabel("\u2212log10 FDR")
         ax.set_title(f"{direction}  (sig n={len(sig)})", fontsize=7)
         ax.grid(alpha=0.2)
     fig.suptitle(f"{df['comparison'].iloc[0]}: G-score differential by {unit}",
                  fontsize=8)
+    if info["ringed"]:
+        theme.annot_n(ax, "○ = pre-specified loci/bands", loc="upper left")
     theme.finalize(fig, "tight")
     save(fig, cfg, f"{prefix}_{unit}_volcano")
 
