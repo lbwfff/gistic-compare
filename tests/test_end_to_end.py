@@ -30,6 +30,11 @@ def test_benchmark_all_modules(benchmark_config, tmp_path):
     g_summary = tables / "G_paper_summary.tsv"
     assert not g_summary.exists()
     assert figures.glob("A_jaccard_interval.png")
+    # run manifest records the skip reason
+    import json
+    mf = json.loads((tables.parent / "run_manifest.json").read_text())
+    skips = [m for m in mf["modules"] if m["id"] == "G"]
+    assert skips and skips[0]["status"] == "skipped" and "panel" in skips[0]["reason"]
 
 
 def test_benchmark_with_reference_panel(benchmark_config, tmp_path):
@@ -66,6 +71,24 @@ def test_pairwise_all_modules(pairwise_config, tmp_path):
     assert figures.glob("P1_jaccard.png")
     assert figures.glob("P4_genome_diff_fisher.png")
     assert figures.glob("GS_band_genome_amp.png")
+    # MDE / power table: one row per comparison x direction x baseline
+    power = pd.read_csv(tables / "P4_power.tsv", sep="\t")
+    assert len(power) == 1 * 2 * 5          # comps x {Amp,Del} x baselines
+    assert {"mde_up", "mde_down", "mde", "baseline_freq"} <= set(power)
+    assert (power["mde"] > 0).all() and (power["mde"] < 1).all()
+    summary = pd.read_csv(tables / "P4_summary.tsv", sep="\t")
+    assert {"max_abs_diff_amp", "n_windows_diff_gt_mde_amp"} <= set(summary)
+    # P5 shares the machinery
+    assert (tables / "P5_power.tsv").exists()
+    # OncoPrint: long call table + figure
+    onco_calls = pd.read_csv(tables / "P1_onco_calls.tsv", sep="\t")
+    assert {"peak_key", "sample", "cohort", "call"} <= set(onco_calls)
+    assert figures.glob("P1_oncoprint*.png")
+    # run manifest is written next to the tables
+    import json
+    mf = json.loads((tables.parent / "run_manifest.json").read_text())
+    assert mf["run_id"] == "test_pair"
+    assert all(m["status"] == "ok" for m in mf["modules"])
 
 
 def test_pairwise_loci_preset_produces_paper_tables(pairwise_config, tmp_path):

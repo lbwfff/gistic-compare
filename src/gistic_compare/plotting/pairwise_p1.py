@@ -429,5 +429,7 @@ def figures_p1(res: dict, cfg) -> None:
     plot_p1_matched_scatter(res.get("matched"), cfg)
     plot_p1_set_summary(res.get("jaccard"), cfg)
     plot_p1_delta_track(res.get("delta_grid"), cfg)
+    from .oncoprint import figures_oncoprint
+    figures_oncoprint(res, cfg)
 
 

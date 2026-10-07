@@ -33,6 +33,7 @@ from . import (  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402
     seg_qc,
 )
 from .config import assign_comparison_kinds, load_config, out_table
+from .run_manifest import write_manifest
 
 BENCHMARK_MODULES = {
     "A": ("peak overlap", peak_overlap.run_module_a, plotting.figures_a),
@@ -148,10 +149,15 @@ def main(argv: list[str] | None = None) -> int:
     reasons = _skip_reasons(cfg)
     skipped_pre = [m for m in mods if m in reasons]
     mods = [m for m in mods if m not in reasons]
+    modules_status: list[dict] = [
+        dict(id=m, label=MODULES[m][0], status="skipped", reason=reasons[m])
+        for m in skipped_pre
+    ]
     for mid in skipped_pre:
         print(f"[skip] {mid}: {reasons[mid]}")
     if not mods:
         print("nothing to run", file=sys.stderr)
+        write_manifest(cfg, modules_status, total_seconds=time.time() - t0)
         return 1
 
     print(f"[config] {cfg['_config_path']}")
@@ -201,10 +207,15 @@ def main(argv: list[str] | None = None) -> int:
                     traceback.print_exc()
             print(f"  done in {time.time() - t:.1f}s -> "
                   f"{cfg['output']['_tables']}/{mid}_*")
+            modules_status.append(dict(id=mid, label=label, status="ok",
+                                       seconds=round(time.time() - t, 1)))
         except Exception as e:
             failed.append(mid)
             print(f"  [ERROR] module {mid} failed: {e}")
             traceback.print_exc()
+            modules_status.append(dict(id=mid, label=label, status="failed",
+                                       error=str(e),
+                                       seconds=round(time.time() - t, 1)))
             if args.fail_fast:
                 break
 
@@ -212,6 +223,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _write_overview(cfg, data, results)
         print(f"\n[overview] {cfg['output']['_tables']}/00_cohort_overview.tsv")
+    except Exception:
+        traceback.print_exc()
+
+    # run manifest (always) — config snapshot, versions, module status
+    try:
+        data_summary = {
+            cid: dict(label=d["label"],
+                      n_samples=int(d["seg"]["sample"].nunique()),
+                      n_peaks=int(len(d["peaks"])),
+                      n_amp=int((d["peaks"]["type"] == "Amp").sum()),
+                      n_del=int((d["peaks"]["type"] == "Del").sum()))
+            for cid, d in data.items()
+        }
+        manifest_path = write_manifest(cfg, modules_status,
+                                       total_seconds=time.time() - t0,
+                                       data_summary=data_summary)
+        print(f"[manifest] {manifest_path}")
     except Exception:
         traceback.print_exc()
 

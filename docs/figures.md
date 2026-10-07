@@ -39,3 +39,12 @@ code in `src/gistic_compare/plotting/` only supplies content.
   time (`cfg["_n_samples"]`).
 - Paired/unpaired status of a comparison is printed in the figure footnote.
 - No descriptive titles inside figures — keep captions in your manuscript.
+
+## OncoPrint (P1)
+
+Rows are union peak keys (moderate-match chains), columns are samples grouped
+by cohort. Cells: 0 = white, 1/2 = mid/deep amplitude (vermillion = Amp, blue
+= Del), **grey = the cohort has no member peak for that key** (GISTIC did not
+call a peak — distinct from "called, no alteration"). The right-hand strip
+shows Δfreq (A − B) in cohort colours, treating a missing peak as frequency 0
+(stated in the figure footnote). Cohort labels carry n.

@@ -43,6 +43,96 @@ def _tier_kwargs(ov: dict[str, Any]) -> dict[str, tuple]:
     }
 
 
+def build_onco_data(cfg: dict[str, Any], data: dict[str, dict],
+                    q_main: float) -> list[dict[str, Any]]:
+    """Union-peak × sample call matrices for OncoPrint figures.
+
+    One entry per comparison.  Rows are union peak keys (moderate-match
+    chains from ``build_union_keys``), columns are the samples of the two
+    cohorts side by side; values are the 0/1/2 amplitude-threshold calls
+    (max over the peaks chained into the key).  A cell is NaN when the
+    cohort has **no member peak** for that key — i.e. GISTIC did not call a
+    peak there, which is shown as grey rather than as "no alteration".
+    """
+    keys = build_union_keys(cfg, data, q_main)
+    if keys.empty:
+        return []
+
+    out = []
+    for cmp_ in cfg["comparisons"]:
+        ca, cb = cmp_["a"], cmp_["b"]
+        comp = f"{ca}_vs_{cb}"
+        ksub = keys[keys["cohort"].isin([ca, cb])].copy()
+        if ksub.empty:
+            continue
+
+        # per-cohort per-sample max call over the peaks chained into a key
+        call_frames = []
+        for cid in (ca, cb):
+            kc = ksub[ksub["cohort"] == cid]
+            if kc.empty:
+                continue
+            calls = data[cid]["calls"]
+            sub = calls[calls["peak_id"].isin(set(kc["peak_id"]))].copy()
+            if sub.empty:
+                continue
+            pid2key = dict(zip(kc["peak_id"], kc["peak_key"]))
+            sub["peak_key"] = sub["peak_id"].map(pid2key)
+            sub = sub[sub["peak_key"].notna()]
+            sub["call"] = pd.to_numeric(sub["call"], errors="coerce")
+            agg = (sub.groupby(["peak_key", "sample"], as_index=False)["call"]
+                      .max())
+            agg["cohort"] = cid
+            call_frames.append(agg)
+        if not call_frames:
+            continue
+        long = pd.concat(call_frames, ignore_index=True)
+
+        samples = (sorted(data[ca]["calls"]["sample"].unique())
+                   + sorted(data[cb]["calls"]["sample"].unique()))
+        matrix = long.pivot_table(index="peak_key", columns="sample",
+                                  values="call", aggfunc="max")
+        matrix = matrix.reindex(columns=samples)
+
+        # row metadata: coordinates from the first member, per-cohort q/freq
+        meta_rows = []
+        for key, g in ksub.groupby("peak_key", sort=False):
+            first = g.sort_values(["chrom", "start"]).iloc[0]
+            row = dict(peak_key=key, ptype=first["ptype"],
+                       cytoband=first["cytoband"], chrom=first["chrom"],
+                       start=int(first["start"]), end=int(first["end"]))
+            for cid, side in ((ca, "a"), (cb, "b")):
+                m = g[g["cohort"] == cid]
+                row[f"q_{side}"] = (float(m["q"].min()) if len(m) else np.nan)
+                row[f"freq_{side}"] = (float(m["freq_altered"].max())
+                                       if len(m) else np.nan)
+                row[f"present_{side}"] = bool(len(m))
+            meta_rows.append(row)
+        meta = pd.DataFrame(meta_rows).set_index("peak_key")
+
+        # row order: Amp above Del, then genomic
+        from .config import CHROM_RANK
+        meta["_r"] = meta["chrom"].map(CHROM_RANK)
+        meta = meta.sort_values(["ptype", "_r", "start"],
+                                ascending=[False, True, True])
+        order = meta.index
+        meta = meta.drop(columns="_r")
+        matrix = matrix.reindex(order)
+        long_out = long[long["peak_key"].isin(set(order))]
+
+        blocks = []
+        for cid in (ca, cb):
+            cols = [s for s in samples
+                    if s in set(data[cid]["calls"]["sample"].unique())]
+            blocks.append(dict(cohort=cid,
+                               label=cfg["cohorts"][cid].get("label", cid),
+                               columns=cols))
+        out.append(dict(comparison=comp, kind=cmp_.get("kind", "unpaired"),
+                        a=ca, b=cb, matrix=matrix, meta=meta,
+                        calls=long_out, blocks=blocks))
+    return out
+
+
 def run_module_p1(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     ana = cfg["analysis"]
     q_main = ana["q_thresholds"][0]
@@ -241,6 +331,15 @@ def run_module_p1(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
             delta_grid[f"{ca}_vs_{cb}_{ptype}"] = xa - xb
     # long form for plotting: chrom/start/end + one col per comp×ptype already
 
+    # ---- union-peak OncoPrint data ----
+    onco = build_onco_data(cfg, data, q_main)
+    if onco:
+        all_calls = pd.concat([o["calls"] for o in onco], ignore_index=True)
+        all_calls.to_csv(out_table(cfg, "P1_onco_calls.tsv"), sep="\t",
+                         index=False)
+        print(f"  [P1] oncoprint: {len(all_calls)} call rows, "
+              f"{sum(len(o['matrix']) for o in onco)} union peaks")
+
     jaccard_df.to_csv(out_table(cfg, "P1_jaccard.tsv"), sep="\t", index=False)
     match_df.to_csv(out_table(cfg, "P1_matched_pairs.tsv"), sep="\t", index=False)
     unique_df.to_csv(out_table(cfg, "P1_unique_peaks.tsv"), sep="\t", index=False)
@@ -256,4 +355,4 @@ def run_module_p1(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
 
     return dict(jaccard=jaccard_df, matched=match_df, unique=unique_df,
                 delta=ddf, delta_stats=sdf, membership=member_df,
-                correlations=corr_df, delta_grid=delta_grid)
+                correlations=corr_df, delta_grid=delta_grid, onco=onco)

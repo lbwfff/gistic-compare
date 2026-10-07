@@ -12,6 +12,15 @@ First open-source release. Reorganized from the internal
 - `gistic-compare` console command (and `python -m gistic_compare`) replacing
   the ad-hoc `run_analysis.py`, with `--outdir`, `--list-modules`, and
   module pre-checks (G/P5/GS skip with a reason instead of failing).
+- **Run manifest**: every run writes `run_manifest.json` (resolved config
+  snapshot, tool/dependency versions, git commit, per-module status/timings).
+- **MDE / power table** (`P4_power.tsv` / `P5_power.tsv`): minimum detectable
+  frequency difference per comparison × direction × baseline at
+  alpha=0.05/power=0.8, plus `max_abs_diff_*` and
+  `n_windows_diff_gt_mde_*` columns in the summary tables.
+- **Union-peak OncoPrint** (`P1_onco_calls.tsv` + `P1_oncoprint[_<comp>]`
+  figures): per-sample 0/1/2 calls across cohorts with a Δfreq strip;
+  grey encodes "no significant peak called in that cohort".
 - Preset system: paper-/study-specific values moved out of code into YAML
   (`presets/reference_panels/*.yaml` for module G, `presets/loci_sets/*.yaml`
   for P4/P5/GS/CF locus annotations). Unconfigured = fully generic runs.

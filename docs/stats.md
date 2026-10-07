@@ -34,6 +34,27 @@ with different cohort sizes.
 - **`*_differential_regions`** — windows are *selected* on the same data that
   is then tested; p-values are optimistic. Candidates only.
 
+## Power / minimum detectable difference (P4/P5)
+
+`*_power.tsv` answers the question a negative result always raises: **how
+large a difference could this comparison have detected?**  For each
+comparison × direction (Amp/Del) × baseline frequency (5/10/20/30/50%),
+it reports the minimum detectable absolute difference (MDE) at
+`alpha=0.05, power=0.8` (arcsine / Cohen's-h approximation, configurable via
+`analysis.regional.power_alpha` / `power_target`).
+
+Interpretation rules:
+
+- An observed |Δfreq| **below** the MDE means "not detectable at this sample
+  size" — it does **not** mean "no difference".
+- For small cohorts (n ≲ 20) the arcsine MDE is **optimistic** relative to
+  exact tests (Fisher is discrete and conservative at these n); treat it as a
+  lower bound on the detectable difference.
+- `*_summary.tsv` additionally reports `max_abs_diff_{amp,del}` (largest
+  observed window difference) and `n_windows_diff_gt_mde_{amp,del}` — windows
+  whose observed difference exceeds the per-window MDE, i.e. findings that
+  were **empowered to be found**.
+
 ## Null calibration (P4/P5)
 
 Random within-cohort half-splits quantify the false-positive background of

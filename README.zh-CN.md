@@ -29,6 +29,7 @@ gistic-compare --config my_config.yaml --modules P1,P4 --outdir out/
 ```
 
 - 结果写到 config 同级的 `results/<run_id>/{tables,figures}`（或 `--outdir`）；
+- **每次运行自动写 `run_manifest.json`**（config 快照、包/依赖版本、git commit、各模块状态与耗时）；
 - `--modules` 子集校验所属 workflow（benchmark 给 P1 会报错并提示）；
 - 某模块失败不中断其余模块（除非 `--fail-fast`）；退出码 0 = 全部成功。
 
@@ -134,10 +135,10 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS 另需各队列
 
 | ID | 定位 | 内容 |
 |----|------|------|
-| **P1** | 检出/一致性 | 匹配对 + Δq/Δfreq、单侧特有峰、三层 tier Jaccard、UpSet、Δfreq Wilcoxon+FDR、1 Mb 轨迹相关 + Δ 轨迹 |
+| **P1** | 检出/一致性 | 匹配对 + Δq/Δfreq、单侧特有峰、三层 tier Jaccard、UpSet、逐样本 **OncoPrint**(union 峰 0/1/2 调用) |
 | **P2** | 检出/一致性 | 样本级调用一致（仅 paired）：exact agreement、weighted κ、McNemar+FDR；unpaired 自动跳过 |
 | **P3** | 建模 | 逐峰 `altered ~ cohort [+ 单协变量]` logistic、BH-FDR；无 meta 跳过 |
-| **P4** | **组间差异（CBS 分段）** | `tumors.seg` 切固定窗（默认 1 Mb）→ 二值化 → Fisher + MW + FDR、区域合并、null 校准 |
+| **P4** | **组间差异（CBS 分段）** | `tumors.seg` 切固定窗（默认 1 Mb）→ 二值化 → Fisher + MW + FDR、区域合并、null 校准、**最小可检出差异（MDE）表** |
 | **P5** | **组间差异（marker 矩阵）** | 与 P4 同构，输入换成 `D.cap1.5.mat` 重采样到同一网格 |
 | **CF** | 混杂敏感性 | 只读 P4/P5 表 + 每队列边际分布：E-value、最小解释效应 δ*、偏差上界/去偏下界（**定界**而非校正） |
 | **GS** | 振幅差分 | 逐窗/逐 band G-score 组间差 + 置换检验（normal 或 MC） |

@@ -95,10 +95,10 @@ and *"which signals are specific to my experiment?"*.
 
 | ID | question | basis |
 |---|---|---|
-| P1 | do the peak lists agree? (matched pairs, Δq/Δfreq, unique peaks, tiered Jaccard, UpSet) | GISTIC peaks |
+| P1 | do the peak lists agree? (matched pairs, Δq/Δfreq, unique peaks, tiered Jaccard, UpSet, per-sample **OncoPrint** of union peaks) | GISTIC peaks |
 | P2 | do the same samples get the same calls? (auto-skips when unpaired) | per-peak calls |
 | P3 | per-peak logistic `altered ~ cohort + covariates` (needs a sample-metadata table) | per-peak calls |
-| P4 | is the CN distribution different in this region? (1 Mb windows, Fisher + MW, null calibration) | `tumors.seg` |
+| **P4** | is the CN distribution different in this region? (1 Mb windows, Fisher + MW, null calibration, **minimum-detectable-difference table**) | `tumors.seg` |
 | P5 | same as P4 on GISTIC's own marker matrix | `D.cap1.5.mat` |
 | CF | how large would a confounder have to be to explain the P4/P5 findings? (bounds, not adjustment) | P4/P5 tables |
 | GS | which windows/bands differ in **amplitude** (G-score) rather than frequency? | `D.cap1.5.mat` |
@@ -150,8 +150,16 @@ results/<run_id>/
 └── figures/   # PDF (vector, Type-42 fonts) + PNG (600 dpi) per table
 ```
 
+Every run also writes **`run_manifest.json`** next to the tables: the resolved
+config snapshot, package/dependency versions, git commit (when run from a
+checkout), and per-module status/timings — any result table can be traced back
+to exactly what produced it.
+
 Figures follow a publication theme (Okabe-Ito palette, Arial, capped
 double-column width, Wilson CIs, BH-FDR annotations) — see `docs/figures.md`.
+The P1 OncoPrint shows per-sample 0/1/2 calls on union peaks (grey = that
+cohort did not call a peak there) with the cohort-coloured Δ-frequency strip
+alongside.
 
 ## Command line
 

@@ -40,6 +40,104 @@ from .presets import from_cfg as _preset_from_cfg
 from .score_track import make_grid
 
 
+def _mde_two_props(n_a: float, n_b: float, p_base: float,
+                   alpha: float = 0.05, power: float = 0.8
+                   ) -> tuple[float, float, float]:
+    """MDE between two proportions from a fixed baseline frequency.
+
+    Arcsine (Cohen's h) approximation: the test on ``2*asin(sqrt(p))`` has
+    variance ``1/n_a + 1/n_b``, so an 80%-power (two-sided ``alpha``)
+    contrast needs an arcsine half-gap of
+    ``h/2 = (z_{1-a/2} + z_{power}) / 2 * sqrt(1/n_a + 1/n_b)``.
+    With the baseline frequency held fixed we return the detectable
+    upward shift, the detectable downward shift, and their maximum
+    (conservative single-number MDE).
+    """
+    from math import asin, pi, sin, sqrt
+
+    from scipy.stats import norm
+    za = float(norm.ppf(1 - alpha / 2))
+    zb = float(norm.ppf(power))
+    half_gap = 0.5 * (za + zb) * sqrt(1.0 / n_a + 1.0 / n_b)
+    phi = asin(sqrt(min(max(p_base, 1e-12), 1 - 1e-12)))
+    p_up = sin(min(pi / 2, phi + half_gap)) ** 2
+    p_dn = sin(max(0.0, phi - half_gap)) ** 2
+    mde_up = max(0.0, p_up - p_base)
+    mde_dn = max(0.0, p_base - p_dn)
+    return mde_up, mde_dn, max(mde_up, mde_dn)
+
+
+_POWER_BASELINES = (0.05, 0.10, 0.20, 0.30, 0.50)
+
+
+def _mde_window(na: np.ndarray, nb: np.ndarray, p_bar: np.ndarray,
+                alpha: float, power: float) -> np.ndarray:
+    """Window-wise conservative MDE (vectorised over windows)."""
+    from scipy.stats import norm
+    za = float(norm.ppf(1 - alpha / 2))
+    zb = float(norm.ppf(power))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        half_gap = 0.5 * (za + zb) * np.sqrt(
+            1.0 / np.maximum(na, 1) + 1.0 / np.maximum(nb, 1))
+        phi = np.arcsin(np.sqrt(np.clip(p_bar, 0.0, 1.0)))
+    p_up = np.sin(np.clip(phi + half_gap, 0, np.pi / 2)) ** 2
+    p_dn = np.sin(np.clip(phi - half_gap, 0, np.pi / 2)) ** 2
+    return np.maximum(p_up - p_bar, p_bar - p_dn)
+
+
+def _power_summary(df: pd.DataFrame, rcfg: dict,
+                   alpha: float = 0.05, power: float = 0.8) -> pd.DataFrame:
+    """Per-comparison MDE table + observed-vs-MDE contrasts."""
+    rows = []
+    if df.empty:
+        return pd.DataFrame()
+    for comp, g in df.groupby("comparison"):
+        na = float(np.nanmedian(g["n_a"]))
+        nb = float(np.nanmedian(g["n_b"]))
+        if not na or not nb:
+            continue
+        for direction, pcol in (("Amp", "freq_amp"), ("Del", "freq_del")):
+            pa = g[f"{pcol}_a"].to_numpy(float)
+            pb = g[f"{pcol}_b"].to_numpy(float)
+            pooled = float(np.nanmean(np.concatenate([pa, pb])))
+            for base in _POWER_BASELINES:
+                mde_up, mde_dn, mde = _mde_two_props(na, nb, base, alpha,
+                                                     power)
+                rows.append(dict(
+                    comparison=comp, direction=direction,
+                    n_a=round(na), n_b=round(nb),
+                    alpha=alpha, power_target=power,
+                    baseline_freq=base,
+                    mde_up=round(mde_up, 4), mde_down=round(mde_dn, 4),
+                    mde=round(mde, 4),
+                    observed_mean_pooled_freq=round(pooled, 4),
+                ))
+    return pd.DataFrame(rows)
+
+
+def _window_mde_contrast(df: pd.DataFrame, rcfg: dict,
+                         alpha: float = 0.05,
+                         power: float = 0.8) -> dict[str, float]:
+    """How many windows show a difference larger than the per-window MDE."""
+    out: dict[str, float] = {}
+    for direction in ("amp", "del"):
+        na = df["n_a"].to_numpy(float)
+        nb = df["n_b"].to_numpy(float)
+        pa = df[f"freq_{direction}_a"].to_numpy(float)
+        pb = df[f"freq_{direction}_b"].to_numpy(float)
+        with np.errstate(invalid="ignore"):
+            pooled = ((na * np.nan_to_num(pa) + nb * np.nan_to_num(pb))
+                      / (na + nb))
+            mde = _mde_window(na, nb, pooled, alpha, power)
+            diff = np.abs(pa - pb)
+        ok = np.isfinite(mde) & np.isfinite(diff)
+        out[f"n_windows_diff_gt_mde_{direction}"] = int(
+            (diff[ok] > mde[ok]).sum()) if ok.any() else 0
+        out[f"max_abs_diff_{direction}"] = (round(float(np.nanmax(diff)), 4)
+                                            if ok.any() else np.nan)
+    return out
+
+
 def _regional_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     r = (cfg.get("analysis") or {}).get("regional") or {}
     preset = _preset_from_cfg(cfg)
@@ -63,6 +161,8 @@ def _regional_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
         cytoband_file=_rp("cytoband_file"),
         refgene_file=_rp("refgene_file"),
         marker_cap_file=r.get("marker_cap_file", "D.cap1.5.mat"),
+        power_alpha=float(r.get("power_alpha", 0.05)),
+        power_target=float(r.get("power_target", 0.8)),
         # preset (study-specific) loci / bookmarked bands, all empty by default
         loci=list(preset["loci"]),
         band_marks=list(preset["bands"]),
@@ -610,6 +710,9 @@ def analyze_windows(cfg: dict[str, Any], vals: dict[str, np.ndarray],
                         | ((df["freq_del_a"] >= rcfg["excl_freq_min"]) & (df["freq_del_b"] <= rcfg["excl_freq_max"]))
                         | ((df["freq_del_b"] >= rcfg["excl_freq_min"]) & (df["freq_del_a"] <= rcfg["excl_freq_max"]))).sum())
         paper = df[df["paper_locus"] != ""]
+        mde = _window_mde_contrast(df, rcfg,
+                                   alpha=rcfg.get("power_alpha", 0.05),
+                                   power=rcfg.get("power_target", 0.8))
         summary_rows.append(dict(
             comparison=comp, kind=kind, bin_size=rcfg["bin_size"],
             amp_thr=rcfg["amp_thr"], del_thr=rcfg["del_thr"], fdr_thr=fdr_thr,
@@ -619,6 +722,10 @@ def analyze_windows(cfg: dict[str, Any], vals: dict[str, np.ndarray],
                              if not reg.empty else 0),
             n_freq_exclusive_windows=freq_exc, n_paper_windows=len(paper),
             paper_loci_hit=",".join(sorted(set(paper["paper_locus"]))),
+            max_abs_diff_amp=mde["max_abs_diff_amp"],
+            max_abs_diff_del=mde["max_abs_diff_del"],
+            n_windows_diff_gt_mde_amp=mde["n_windows_diff_gt_mde_amp"],
+            n_windows_diff_gt_mde_del=mde["n_windows_diff_gt_mde_del"],
         ))
 
     regional = (pd.concat(diff_frames, ignore_index=True) if diff_frames
@@ -659,6 +766,9 @@ def analyze_windows(cfg: dict[str, Any], vals: dict[str, np.ndarray],
                 else pd.DataFrame())
     exclusive = pd.DataFrame(exc_rows)
     summary = pd.DataFrame(summary_rows)
+    power = _power_summary(regional, rcfg,
+                           alpha=rcfg.get("power_alpha", 0.05),
+                           power=rcfg.get("power_target", 0.8))
 
     null_rows = []
     for cid, v in vals.items():
@@ -669,7 +779,7 @@ def analyze_windows(cfg: dict[str, Any], vals: dict[str, np.ndarray],
 
     return dict(regional=regional, regions=regions, bands=band_df,
                 significant=sig_df, paper=paper_df, exclusive=exclusive,
-                summary=summary, null=null, grid=grid, rcfg=rcfg,
+                summary=summary, power=power, null=null, grid=grid, rcfg=rcfg,
                 band_genes=band_genes)
 
 
@@ -681,6 +791,7 @@ def write_p4_like(cfg: dict[str, Any], res: dict, prefix: str) -> None:
                      ("paper_loci", "paper"),
                      ("exclusive_regions", "exclusive"),
                      ("summary", "summary"),
+                     ("power", "power"),
                      ("null_calibration", "null")):
         res[fn].to_csv(out_table(cfg, f"{prefix}_{name}.tsv"), sep="\t",
                        index=False)
