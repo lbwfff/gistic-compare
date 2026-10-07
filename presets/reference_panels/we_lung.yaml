@@ -1,0 +1,50 @@
+# Reference panel for module G (paper bench) — EXAMPLE
+#
+# Panel id: we_lung.  Numeric/qualitative reference values for the WE lung
+# (Caucasian) NSCLC series used while developing this package.  Copy this
+# file, keep the schema, and replace the values with those of the series you
+# want to benchmark against.  Enable it in your config:
+#
+#   paper_benchmark:
+#     enabled: true
+#     panel: presets/reference_panels/we_lung.yaml
+#
+id: we_lung
+
+# percent of the (autosomal) genome covered by exclusively amplified /
+# deleted segments
+genome_pct: {amp: 15.5, del: 25.3}
+
+# named top regions: cytoband prefix + minimum reported frequency (%)
+top_amp:
+  - {band: 5p15, min_freq_pct: 60.0}
+  - {band: 1q21, min_freq_pct: 60.0}
+top_del:
+  - {band: 3p14, min_freq_pct: 50.0}
+  - {band: 9q21, min_freq_pct: 50.0}
+
+# confirmed regions (cytoband prefixes; matched against peak Descriptor,
+# falling back to the windows below when the prefix misses)
+amp_cytobands: ["7p11", "8q24", "11q13", "14q13", "20q11"]
+del_cytobands: ["3p14", "8p21", "9p21", "10q", "15q", "16q23", "17p13"]
+broad_amp_arms: ["1q", "5p", "6p", "7p", "8q"]
+focal_amp_arms: ["11q", "14q", "20q"]
+large_del_arms: ["3p", "6q", "8p", "9q", "13p"]
+
+# hg19 windows (bp) used when a cytoband prefix does not match
+# (Descriptor = band of the peak centre; neighbouring bands occur)
+windows:
+  5p15:  {chrom: chr5,  start: 1500000,  end: 10000000}
+  1q21:  {chrom: chr1,  start: 145000000, end: 156000000}   # 1q21-1q22 label slip
+  3p14:  {chrom: chr3,  start: 50000000, end: 62000000}    # FHIT region
+  9q21:  {chrom: chr9,  start: 85000000, end: 96000000}
+  8p21:  {chrom: chr8,  start: 20000000, end: 28000000}
+  16q23: {chrom: chr16, start: 84000000, end: 91000000}
+  17p13: {chrom: chr17, start: 0,        end: 8000000}
+
+# named driver genes (presence in q- and width-filtered peak gene lists)
+drivers: ["EGFR", "MYC", "CCND1", "NKX2-1", "E2F", "FHIT", "DUSP4",
+          "CDKN2A", "WWOX", "TP53"]
+# gene groups: present if any member is present
+driver_groups:
+  E2F: ["E2F1", "E2F2", "E2F3"]

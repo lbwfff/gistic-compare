@@ -1,0 +1,52 @@
+# Preset loci set — EXAMPLE
+#
+# Named genomic loci (tested in P4/P5 "paper_loci" tables and annotated on
+# figures) plus bookmarked cytobands (bold/red labels on the P4/P5 heatmap).
+# This example is the four ethnic-specific loci from the WE-vs-EA NSCLC study
+# this package was developed against.  Enable it in your config:
+#
+#   analysis:
+#     regional:
+#       loci_set: presets/loci_sets/we_ea.yaml
+#
+id: we_ea
+
+# loci: name, hg19 interval, direction/type and which cohort was expected to
+# carry it (used for annotations only — the statistics are direction-agnostic)
+loci:
+  - {locus: 16p13.13, chrom: chr16, start: 10500000, end: 12600000, type: Amp, expected_cohort: EA}
+  - {locus: 16p13.11, chrom: chr16, start: 14800000, end: 16800000, type: Amp, expected_cohort: EA}
+  - {locus: 19p13.3,  chrom: chr19, start: 0,        end: 6900000,  type: Del, expected_cohort: WE}
+  - {locus: 19p13.11, chrom: chr19, start: 16300000, end: 20000000, type: Del, expected_cohort: WE}
+
+# bookmarked cytobands: star=true renders the label bold/red on heatmaps
+# (originally the paper's univariate-selected Table 2 list)
+bands:
+  - {band: 1p36.23, star: false}
+  - {band: 1p36.22, star: false}
+  - {band: 1p36.21, star: false}
+  - {band: 1p36.13, star: false}
+  - {band: 1p36.12, star: false}
+  - {band: 1p36.11, star: false}
+  - {band: 1p35.3,  star: false}
+  - {band: 1p31.1,  star: false}
+  - {band: 2p22.3,  star: false}
+  - {band: 4p15.1,  star: false}
+  - {band: 5q35.3,  star: false}
+  - {band: 6p21.32, star: false}
+  - {band: 6q14.1,  star: false}
+  - {band: 16p13.3, star: false}
+  - {band: 16p13.2, star: false}
+  - {band: 16p13.13, star: true}
+  - {band: 16p13.12, star: false}
+  - {band: 16p13.11, star: true}
+  - {band: 16p12.3, star: false}
+  - {band: 16p12.2, star: false}
+  - {band: 16p12.1, star: false}
+  - {band: 16p11.2, star: false}
+  - {band: 17q21.31, star: false}
+  - {band: 19p13.3,  star: true}
+  - {band: 19p13.2,  star: false}
+  - {band: 19p13.13, star: false}
+  - {band: 19p13.12, star: false}
+  - {band: 19p13.11, star: true}

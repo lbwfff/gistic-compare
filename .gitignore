@@ -1,0 +1,27 @@
+# --- python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.eggs/
+.venv/
+venv/
+
+# --- tooling ---
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# --- OS ---
+.DS_Store
+.ipynb_checkpoints/
+
+# --- run outputs (never commit analysis results) ---
+results/
+meta/
+report/
+*.log

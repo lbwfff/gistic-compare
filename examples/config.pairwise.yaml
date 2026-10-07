@@ -1,0 +1,82 @@
+# Example: pairwise workflow (cohort vs cohort, no control)
+#
+# Copy this file, point data_root at your GISTIC output directories, list two
+# or more cohorts, and run:
+#
+#   gistic-compare --config config.pairwise.yaml --all
+#
+# P5 / GS additionally need each cohort's <prefix>.D.cap1.5.mat; those modules
+# are skipped with a notice when the file is missing.
+
+workflow: pairwise
+genome: hg19
+
+data_root: /path/to/data
+run_id: my_comparison
+comparison_mode: experiment_pairs   # all unordered pairs; kind auto-detected
+
+cohorts:
+  expA: {label: "Cohort A", path: cohortA, prefix: A}
+  expB: {label: "Cohort B", path: cohortB, prefix: B}
+
+# optional: sample-level metadata for module P3 (altered ~ covariates).
+# Missing file -> P3 is skipped.
+# metadata:
+#   path: meta/sample_meta.tsv     # relative to data_root
+#   sample_id: sample              # column matching GISTIC sample IDs
+#   covariates: [sex, age_group]
+
+# optional: confounder sensitivity (CF) — needs only per-cohort marginals.
+# CF bounds what a confounder could explain; it does not adjust for it.
+# confounding:
+#   sources: [P4, P5]
+#   smoking_unknown: drop
+#   delta_grid: [0.02, 0.05, 0.10, 0.20]
+#   age_grid: [0.001, 0.002, 0.005, 0.010]
+#   plausible_max_binary: 0.20
+#   plausible_max_age: 0.01
+#   cohorts:
+#     expA: {sex: {male: 100, female: 36}, age_median: 63,
+#            smoking: {smoker: 123, nonsmoker: 13, unknown: 0},
+#            mutations: {EGFR: 15, KRAS: 28, TP53: 41}}
+#     expB: {sex: {male: 49, female: 41}, age_median: 66,
+#            smoking: {smoker: 37, nonsmoker: 35, unknown: 18},
+#            mutations: {EGFR: 29, KRAS: 9, TP53: 27}}
+
+analysis:
+  q_thresholds: [0.25, 0.05]
+  paired_frac: 0.8                # sample-ID overlap fraction -> paired
+  peak_limit_field: wide_peak
+  overlap:
+    min_bp: 50
+    reciprocal_shorter: 0.5
+    reciprocal_both: 0.5
+    default_tier: moderate
+  permutation: {n: 2000, seed: 42}
+  bootstrap: {n: 2000, seed: 42, ci: 0.95}
+  score_track: {bin_size: 1000000}
+  regional:                       # P4 (and P5/GS share thresholds)
+    bin_size: 1000000
+    amp_thr: 0.1
+    del_thr: -0.1
+    excl_freq_min: 0.10
+    excl_freq_max: 0.05
+    fdr: 0.05
+    null_splits: 20
+    seed: 42
+    # cytoband_file: refs/hg19.mat       # optional; bundled tables by default
+    # refgene_file: refs/refgene.hg19.mat
+    # loci_set: presets/loci_sets/we_ea.yaml   # named loci + bookmarked bands
+  gscore:
+    cap: 1.5
+    method: normal                # normal = exact SD + normal tail; or mc
+    perm: 2000
+    seed: 42
+
+output:
+  figure:
+    style: paper
+    palette: okabe_ito
+    width_in: 7.0
+    dpi: 600
+    rasterize_tracks: false
