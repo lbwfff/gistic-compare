@@ -167,7 +167,7 @@ Modules run independently; one failing module does not abort the rest
 ## Development
 
 ```bash
-git clone https://github.com/libingwu/gistic-compare
+git clone https://github.com/lbwfff/gistic-compare
 cd gistic-compare
 pip install -e ".[dev]"
 pytest          # 27 tests, incl. two end-to-end runs on synthetic GISTIC data

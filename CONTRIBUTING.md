@@ -5,7 +5,7 @@ Thanks for considering a contribution!
 ## Development setup
 
 ```bash
-git clone https://github.com/libingwu/gistic-compare
+git clone https://github.com/lbwfff/gistic-compare
 cd gistic-compare
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"

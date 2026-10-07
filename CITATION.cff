@@ -2,13 +2,13 @@ cff-version: 1.2.0
 message: "If you use gistic-compare, please cite it as below."
 title: gistic-compare
 authors:
-  - family-names: Bai
-    given-names: Lingwu
-    orcid: "https://orcid.org/0000-0000-0000-0000"
+  - family-names: Li
+    given-names: Bingwu
+    orcid: "https://orcid.org/0000-0002-3078-5772"
 version: 0.1.0
 date-released: "2026-10-07"
 license: MIT
-repository-code: "https://github.com/libingwu/gistic-compare"
+repository-code: "https://github.com/lbwfff/gistic-compare"
 abstract: >-
   Compare GISTIC 2.0 results across cohorts and processing variants:
   peak-level overlap, sample-level concordance, regional between-cohort

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-    { name = "Lingwu Bai" },
+    { name = "Li Bingwu" },
 ]
 keywords = [
     "gistic", "copy-number", "scna", "bioinformatics",
@@ -48,9 +48,9 @@ dev = [
 gistic-compare = "gistic_compare.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/libingwu/gistic-compare"
-Issues = "https://github.com/libingwu/gistic-compare/issues"
-Documentation = "https://github.com/libingwu/gistic-compare#readme"
+Homepage = "https://github.com/lbwfff/gistic-compare"
+Issues = "https://github.com/lbwfff/gistic-compare/issues"
+Documentation = "https://github.com/lbwfff/gistic-compare#readme"
 
 [tool.setuptools.packages.find]
 where = ["src"]
