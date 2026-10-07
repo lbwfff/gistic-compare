@@ -45,6 +45,21 @@ def compute_fga(seg: pd.DataFrame, log2_threshold: float = 0.2) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _safe_kruskal(*groups):
+    """Kruskal-Wallis that NaNs out degenerate input.
+
+    All-identical groups raise ``ValueError`` in scipy < 1.16 (wheels
+    available for Python 3.10); scipy >= 1.16 returns NaN instead.  Return
+    NaN either way so a constant-input cohort (tiny/empty synthetic data,
+    a single sample per group, ...) skips the group test instead of failing
+    the module.
+    """
+    try:
+        return stats.kruskal(*groups)
+    except ValueError:
+        return np.nan, np.nan
+
+
 def run_module_e(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     ana = cfg["analysis"]
     thr = ana["fga"]["log2_threshold"]
@@ -105,7 +120,7 @@ def run_module_e(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     groups = [qc_all.loc[qc_all["cohort"] == c, "fga"].dropna().to_numpy()
               for c in cohorts]
     if all(len(g) > 0 for g in groups):
-        h, p_kw = stats.kruskal(*groups)
+        h, p_kw = _safe_kruskal(*groups)
         stat_rows.append(dict(metric="fga", test="kruskal_wallis",
                               comparison="all", statistic=float(h),
                               pvalue=float(p_kw)))
