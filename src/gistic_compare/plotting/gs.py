@@ -74,10 +74,16 @@ def plot_gs_volcano(df, cfg, unit, prefix="GS"):
         ax.scatter(s["dG_" + d], s["y"], s=6, color="#CFCFCF", edgecolor="none")
         ax.scatter(sig["dG_" + d], sig["y"], s=9, color=col, edgecolor="none")
         ax.axvline(0, color="#777777", lw=0.6, ls=":")
-        for _, r in s[s["paper_locus"] != ""].iterrows():
-            ax.annotate(str(r["paper_locus"]),
-                        (float(r["dG_" + d]), float(r["y"])), fontsize=5,
-                        xytext=(2, 2), textcoords="offset points")
+        # one label per preset locus (its strongest point), collision-safe
+        ann = (s[s["paper_locus"] != ""]
+               .sort_values("y", ascending=False)
+               .groupby("paper_locus", as_index=False).head(1))
+        if not ann.empty:
+            from ._core import _annotate_labeled_points
+            _annotate_labeled_points(ax, ann["dG_" + d].to_numpy(dtype=float),
+                                     ann["y"].to_numpy(dtype=float),
+                                     ann["paper_locus"].tolist(),
+                                     fontsize=5)
         ax.set_xlabel(f"\u0394G ({direction})  [A \u2212 B]")
         ax.set_ylabel("\u2212log10 FDR")
         ax.set_title(f"{direction}  (sig n={len(sig)})", fontsize=7)

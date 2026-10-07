@@ -127,58 +127,61 @@ def plot_p4_genome_diff_mw(bands, cfg, prefix="P4"):
 
 
 def plot_p4_null(nullcal, summary, cfg, prefix="P4"):
-    """Observed vs random-split null count of FDR-significant 1 Mb windows."""
-    if nullcal is None or nullcal.empty:
+    """Observed vs random-split null count of FDR-significant 1 Mb windows.
+
+    Both quantities belong to a *comparison* (the observed n_sig_windows is
+    comparison-level in the summary table), so the x axis is comparisons,
+    not cohorts.
+    """
+    if summary is None or summary.empty or "n_sig_windows" not in summary:
         return
     style(cfg)
-    coh = list(nullcal["cohort"])
-    x = np.arange(len(coh))
-    pal = _palette(cfg)
-    # observed significant windows for the comparison each cohort takes part in
-    obs = []
-    sum_n = (summary["n_sig_windows"].to_numpy(dtype=float)
-             if summary is not None and not summary.empty
-             and "n_sig_windows" in summary.columns else np.array([]))
-    comps_sum = (list(summary["comparison"]) if summary is not None
-                 and not summary.empty else [])
-    for c in coh:
-        val = np.nan
-        idx = [i for i, comp in enumerate(comps_sum)
-               if c in theme.comp_sides(cfg, comp)]
-        if idx and len(sum_n):
-            val = float(np.nanmax(sum_n[idx]))
-        obs.append(val)
-    obs = np.asarray(obs, dtype=float)
-    null_mean = nullcal["sig_windows_mean"].to_numpy(dtype=float)
-    null_hi = nullcal["sig_windows_p95"].to_numpy(dtype=float)
+    rows = []
+    for _, r in summary.iterrows():
+        ca, cb = theme.comp_sides(cfg, str(r["comparison"]))
+        nc = nullcal[nullcal["cohort"].isin([ca, cb])] if (
+                nullcal is not None and not nullcal.empty) else pd.DataFrame()
+        rows.append(dict(
+            comparison=str(r["comparison"]),
+            observed=float(r["n_sig_windows"]),
+            null_mean=(float(nc["sig_windows_mean"].mean())
+                       if not nc.empty else np.nan),
+            null_p95=(float(nc["sig_windows_p95"].mean())
+                      if not nc.empty else np.nan),
+        ))
+    d = pd.DataFrame(rows)
+    x = np.arange(len(d))
     w = 0.34
     fig, ax = plt.subplots(figsize=theme.figsize(cfg, panel_h=3.0,
                                                  total_w=4.8))
-    for xi, c in enumerate(coh):
-        if np.isfinite(obs[xi]):
-            ax.bar(xi - w / 2 - 0.01, obs[xi], w, color=pal.get(c, "#333333"),
-                   edgecolor="white", linewidth=0.4)
-            if obs[xi] > 0:
-                ax.text(xi - w / 2 - 0.01, obs[xi], f"{int(obs[xi])}",
-                        ha="center", va="bottom", fontsize=5.5,
-                        color="#444444")
-    ax.bar(x + w / 2 + 0.01, null_mean, w, color="#CCCCCC",
+    ax.bar(x - w / 2 - 0.01, d["observed"], w, color="#8A8A8A",
+           edgecolor="white", linewidth=0.4)
+    for xi, val in zip(x, d["observed"]):
+        if np.isfinite(val) and val > 0:
+            ax.text(xi - w / 2 - 0.01, val, f"{int(val)}", ha="center",
+                    va="bottom", fontsize=5.5, color="#444444")
+    ax.bar(x + w / 2 + 0.01, d["null_mean"].fillna(0), w, color="#D9D9D9",
            edgecolor="#999999", linewidth=0.4)
-    ax.errorbar(x + w / 2 + 0.01, null_mean,
-                yerr=[np.zeros(len(x)),
-                      np.clip(null_hi - null_mean, 0, None)],
-                fmt="none", ecolor="#666666", elinewidth=0.8, capsize=2.5,
-                capthick=0.8, zorder=5)
+    if np.isfinite(d["null_mean"]).any():
+        ax.errorbar(x + w / 2 + 0.01, d["null_mean"].fillna(0),
+                    yerr=[np.zeros(len(d)),
+                          np.clip(d["null_p95"] - d["null_mean"], 0,
+                                  None).fillna(0).to_numpy(dtype=float)],
+                    fmt="none", ecolor="#666666", elinewidth=0.8, capsize=2.5,
+                    capthick=0.8, zorder=5)
+        for xi, m in zip(x, d["null_mean"]):
+            if np.isfinite(m):
+                ax.text(xi + w / 2 + 0.01, max(0.01, m) * 1.6,
+                        f"null ≈ {m:.2g}", ha="center", fontsize=5.2,
+                        color="#666666")
     ax.set_xticks(x)
-    ax.set_xticklabels([f"{theme.cohort_label(cfg, c)}\n"
-                        f"(half of {int(r.n_samples)})"
-                        for c, r in zip(coh, nullcal.itertuples())],
-                       fontsize=6.5)
+    ax.set_xticklabels(d["comparison"], fontsize=6.5)
     ax.set_ylabel("FDR-significant 1 Mb windows")
     ymax = 0.0
-    for arr in (obs, null_mean, null_hi):
-        if len(arr) and np.isfinite(arr).any():
-            ymax = max(ymax, float(np.nanmax(arr)))
+    for col in ("observed", "null_mean", "null_p95"):
+        v = d[col].to_numpy(dtype=float)
+        if np.isfinite(v).any():
+            ymax = max(ymax, float(np.nanmax(v)))
     if ymax <= 0:
         # an all-zero panel otherwise autoscales to a nonsensical ±range
         ax.set_ylim(0, 1)
@@ -188,8 +191,8 @@ def plot_p4_null(nullcal, summary, cfg, prefix="P4"):
         ax.set_ylim(0, ymax * 1.28)
     from matplotlib.patches import Patch
     ax.legend(handles=[
-        Patch(facecolor="#BBBBBB", edgecolor="white", label="observed"),
-        Patch(facecolor="#CCCCCC", edgecolor="#999999",
+        Patch(facecolor="#8A8A8A", edgecolor="white", label="observed"),
+        Patch(facecolor="#D9D9D9", edgecolor="#999999",
               label="null (random split, mean, p95)"),
     ], frameon=False, fontsize=6.5, loc="upper right")
     theme.panel_label(ax, theme.panel_letter(0), cfg)

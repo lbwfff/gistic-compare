@@ -37,6 +37,15 @@ def _row_labels(meta: pd.DataFrame, rows: pd.Index) -> list[str]:
         r = meta.loc[k]
         s = str(r["cytoband"]) or f"{r['chrom']}:{int(r['start']) // 10**6}Mb"
         labels.append(s[:_LABEL_MAXLEN])
+    # several union keys can share a cytoband label (same band, different
+    # peaks); append the key's genomic position to keep rows distinguishable
+    counts = pd.Series(labels).value_counts()
+    if (counts > 1).any():
+        labels = [
+            (f"{s} ({int(meta.loc[k, 'start']) // 10**6}Mb)"
+             if counts[s] > 1 else s)
+            for s, k in zip(labels, rows)
+        ]
     if len(rows) > _MAX_LABEL_ROWS_FULL:
         # thin out: keep the first row of every chromosome run
         keep: set[int] = set()

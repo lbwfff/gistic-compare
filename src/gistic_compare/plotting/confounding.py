@@ -93,9 +93,26 @@ def plot_cf_evalue_volcano(ev_rr: pd.DataFrame, cfg: dict[str, Any]) -> None:
     sc = ax.scatter(d["rr"], d["y"], c=d["evalue_rr"].astype(float),
                     cmap="viridis", s=16, alpha=0.8, edgecolor="none")
     ax.axvline(1.0, color="#888888", lw=0.8, ls=":")
-    for _, r in d[d["band"].isin(_preset_bands(cfg))].iterrows():
-        ax.annotate(str(r["band"]), (float(r["rr"]), float(r["y"])),
-                    fontsize=5.5, xytext=(3, 3), textcoords="offset points")
+
+    # label each preset band once (at its strongest finding), plus the top
+    # few generic findings; collision avoidance drops overlapping labels
+    preset = _preset_bands(cfg)
+    lab = d[d["band"].isin(preset)] if preset else d.iloc[0:0]
+    lab = (lab.sort_values("y", ascending=False)
+              .groupby("band", as_index=False).head(1))
+    n_top = max(0, 14 - len(lab))
+    top = (d.sort_values("y", ascending=False)
+            .head(n_top + len(lab)))  # extra head-room for duplicates
+    top = top[~top["band"].isin(set(preset))]
+    top = top[~top["band"].isin(set(lab["band"]))].head(n_top)
+    ann = pd.concat([lab, top]).drop_duplicates(subset=["band"], keep="first")
+    ann = ann[ann["band"].astype(str) != ""]
+    if not ann.empty:
+        from ._core import _annotate_labeled_points
+        _annotate_labeled_points(ax, ann["rr"].to_numpy(dtype=float),
+                                 ann["y"].to_numpy(dtype=float),
+                                 ann["band"].tolist(), fontsize=5.5)
+
     cbar = fig.colorbar(sc, ax=ax, shrink=0.6)
     cbar.set_label("E-value (RR scale)", fontsize=7)
     ax.set_xscale("log")
