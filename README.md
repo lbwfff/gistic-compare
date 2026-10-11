@@ -17,6 +17,8 @@ outputs side by side:
 - *Do the two runs find the same peaks?* (A, P1)
 - *Do the same samples get the same calls?* (C, P2)
 - *Is a region's copy-number distribution actually different between cohorts?* (P4/P5)
+- *Is one cohort globally more rearranged — focal or broad?* (P9)
+- *Which differences survive burden control and quality checks?* (P10, PQ, PD)
 - *How much of the observed difference could confounders explain?* (CF)
 
 ## Installation
@@ -65,13 +67,15 @@ Each cohort folder must contain the GISTIC files named `<prefix>.<suffix>`:
 
 | file | used by |
 |---|---|
-| `<prefix>.all_lesions.conf_90.txt` | A, C, P1–P3 |
+| `<prefix>.all_lesions.conf_90.txt` | A, C, P1–P3, P7/P10 (peak CN layer) |
 | `<prefix>.amp_genes.conf_90.txt` / `.del_genes.conf_90.txt` | D, G, P3 |
 | `<prefix>.scores.gistic` | B |
-| `<prefix>.tumors.seg` | E, P4 |
-| `<prefix>.sample_seg_counts.txt` | E |
+| `<prefix>.tumors.seg` | E, P4, P6, PD (arm calls / baseline), P7–P9 (fallback) |
+| `<prefix>.sample_seg_counts.txt` | E, P10 (sample QC) |
 | `<prefix>.regions_track.conf_90.bed` | A (cross-check) |
-| `<prefix>.D.cap1.5.mat` | P5, GS (optional) |
+| `<prefix>.D.cap1.5.mat` | P5, GS, P7–P9 (optional) |
+| `<prefix>.broad_values_by_arm.txt` | P6 (optional; else derived from seg) |
+| `<prefix>.amp_qv.conf_90.txt` / `.del_qv.conf_90.txt` | P6 (optional, display-only) |
 
 ## The two workflows
 
@@ -91,7 +95,7 @@ and *"which signals are specific to my experiment?"*.
 | F | experiment-specific signal fraction (vs control), 4 weightings |
 | G | benchmark against a **reference panel** (numbers externalized to `presets/reference_panels/*.yaml`; disabled unless configured) |
 
-### pairwise (modules P1–P5, CF, GS) — cohort vs cohort, no control
+### pairwise (modules P1–P10, PQ, PD, CF, GS) — cohort vs cohort, no control
 
 | ID | question | basis |
 |---|---|---|
@@ -100,14 +104,25 @@ and *"which signals are specific to my experiment?"*.
 | P3 | per-peak logistic `altered ~ cohort + covariates` (needs a sample-metadata table) | per-peak calls |
 | **P4** | is the CN distribution different in this region? (1 Mb windows, Fisher + MW, null calibration, **minimum-detectable-difference table**) | `tumors.seg` |
 | P5 | same as P4 on GISTIC's own marker matrix | `D.cap1.5.mat` |
+| **P6** | does the **arm-level (broad) landscape** differ — the aneuploidy background? (per-arm Fisher, per-sample aneuploidy score) | `broad_values_by_arm.txt` or derived from `tumors.seg` |
+| **P7** | same frequency but **stronger alteration**? (amplitude compared *among altered samples*, high-level fraction, freq×amplitude quadrants) | `D.cap1.5.mat` + all_lesions `- CN values` rows |
+| **P8** | are the cohorts separable **as a whole**, and which loci drive it? (PERMANOVA + permutation, CV-AUC elastic-net, stability selection) | window/peak feature matrix |
+| **P9** | is one cohort globally **more rearranged** — and at which scale (focal vs broad)? (three-level SCNA burden score + wGII) | `tumors.seg` + `D.cap1.5.mat` (or seg fallback) |
+| **P10** | which peaks survive once the **global burden** is controlled? (margin-preserving permutation, naive-vs-permutation inflation) | all_lesions `- CN values` rows |
+| **PQ** | are the p-value sets healthy? (Q-Q plots + genomic inflation λ for every scan) | saved tables of the same run |
+| **PD** | **why** is lambda inflated — and what survives baseline removal? (per-sample baseline check, shift-structure track, centering sensitivity with trust layers) | `tumors.seg` |
 | CF | how large would a confounder have to be to explain the P4/P5 findings? (bounds, not adjustment) | P4/P5 tables |
 | GS | which windows/bands differ in **amplitude** (G-score) rather than frequency? | `D.cap1.5.mat` |
 
 **P1–P3 answer detection/consistency** — a locus must first be a significant
-peak in some cohort to enter them. **P4/P5 answer group difference** and do not
-depend on peak calling at all. See `docs/` for statistical caveats (per-window
-FDR is exploratory; the pre-specified cytoband tests and preset loci are the
-confirmatory tier).
+peak in some cohort to enter them. **P4–P7 answer group difference** and do not
+depend on peak calling at all (P7's peak layer is the exception). P8 is a global
+multivariate summary, **P9 the burden background** every per-locus result
+should be read against, **P10 the burden-controlled peak test**, and **PQ/PD
+the quality gates** (inflation, batch/baseline diagnostics). See `docs/` for
+statistical caveats (per-window FDR is exploratory; the pre-specified cytoband
+tests and preset loci are the confirmatory tier; P8 separability is not
+evidence of biology).
 
 ## Study-specific values live in presets, not code
 
@@ -138,9 +153,10 @@ python scripts/build_refs.py --mat /path/to/hg19.mat
 ```
 
 You can also pass plain TSVs with the same columns, or GISTIC `.mat` files,
-via the config paths. P5/GS additionally need each cohort's
-`<prefix>.D.cap1.5.mat` (produced by your GISTIC run) — P5/GS are skipped with
-a notice when any cohort lacks it.
+via the config paths. P5/GS/P7–P9 additionally use each cohort's
+`<prefix>.D.cap1.5.mat` (produced by your GISTIC run) — P5/GS are skipped
+with a notice when any cohort lacks it, while P7–P9 fall back to
+seg-derived window values.
 
 ## Output
 
@@ -181,7 +197,7 @@ Modules run independently; one failing module does not abort the rest
 git clone https://github.com/lbwfff/gistic-compare
 cd gistic-compare
 pip install -e ".[dev]"
-pytest          # 27 tests, incl. two end-to-end runs on synthetic GISTIC data
+pytest          # 65 tests, incl. end-to-end runs on synthetic GISTIC data
 ruff check src tests
 ```
 
@@ -196,6 +212,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - hg19 only (chromosome set and lengths are fixed; see `genomes.py`).
 - Inputs are GISTIC 2.0 outputs (conf_90 tables); the package does not run
   GISTIC itself.
+- P6 derives arm-level broad calls from `tumors.seg` when GISTIC's own
+  `broad_values_by_arm.txt` is absent — the two definitions are related but
+  not identical, and the source is recorded in every P6 table.
+- P8 separability is a descriptive global statistic: batch, platform and
+  processing differences separate cohorts just as well as biology. Read it
+  together with CF.
+- P10 controls the **global burden** confounder only; it is not a batch
+  correction. PQ/PD exist to surface (and, for baselines, remove) exactly
+  that class of artifact — run them before quoting scan results.
+- An optional absolute-copy-number extension (WGD/purity/ploidy via
+  FACETS, R-backed) is planned — design in `docs/plan_absolute_cn.md`.
 - CF bounds confounding from marginal distributions only — it cannot adjust
   for confounders without sample-level metadata (that is P3).
 - `results/` and any patient-level data should never be committed to this

@@ -5,7 +5,7 @@
 | workflow | 模块 | 拓扑 | 用途 |
 |---|---|---|---|
 | **benchmark**（默认） | A–G | 星型：各实验 vs 对照 | 评估实验表现、相对对照的特有信号 |
-| **pairwise** | P1–P5, CF, GS | 两两实验比较（无对照） | P1–P3 检出/一致性（基于 GISTIC 峰/调用），P4/P5 区域级组间差异（P4 用 CBS 分段、P5 用 GISTIC marker 矩阵），CF 混杂敏感性，GS 振幅差分 |
+| **pairwise** | P1–P10, PQ, PD, CF, GS | 两两实验比较（无对照） | P1–P3 检出/一致性（基于 GISTIC 峰/调用），P4/P5 区域级组间差异（P4 用 CBS 分段、P5 用 GISTIC marker 矩阵），P6 臂级 broad 景观，P7 altered 内部幅度，P8 多变量整体可分性，P9 三级负荷+wGII，P10 负担受控逐峰置换，PQ p 值质检，PD 批次/基线诊断，CF 混杂敏感性，GS 振幅差分 |
 
 ## 安装
 
@@ -39,13 +39,15 @@ gistic-compare --config my_config.yaml --modules P1,P4 --outdir out/
 
 | 文件 | 用途 |
 |---|---|
-| `<prefix>.all_lesions.conf_90.txt` | A, C, P1–P3 |
+| `<prefix>.all_lesions.conf_90.txt` | A, C, P1–P3, P7/P10（peak 层 CN 值） |
 | `<prefix>.amp_genes.conf_90.txt` / `.del_genes.conf_90.txt` | D, G, P3 |
 | `<prefix>.scores.gistic` | B |
-| `<prefix>.tumors.seg` | E, P4 |
-| `<prefix>.sample_seg_counts.txt` | E |
+| `<prefix>.tumors.seg` | E, P4, P6, PD（臂级调用/基线）、P7–P9（回退） |
+| `<prefix>.sample_seg_counts.txt` | E, P10（样本 QC） |
 | `<prefix>.regions_track.conf_90.bed` | A（校验） |
-| `<prefix>.D.cap1.5.mat` | P5, GS（可选） |
+| `<prefix>.D.cap1.5.mat` | P5, GS, P7–P9（可选） |
+| `<prefix>.broad_values_by_arm.txt` | P6（可选；缺失时由 seg 推导） |
+| `<prefix>.amp_qv.conf_90.txt` / `.del_qv.conf_90.txt` | P6（可选，仅展示） |
 
 > **解析注意**：GISTIC `all_lesions.conf_90.txt` 中每个峰有两行（摘要行 + `- CN values` 行），解析器只取摘要行（0/1/2 调用）。
 
@@ -113,7 +115,7 @@ hg19 的 cytoband 与 refgene 精简表随包分发（`src/gistic_compare/data/r
 python scripts/build_refs.py --mat /path/to/hg19.mat
 ```
 
-config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS 另需各队列的 `<prefix>.D.cap1.5.mat`（GISTIC 自己产生）；缺失时模块自动跳过并提示。
+config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到各队列的 `<prefix>.D.cap1.5.mat`（GISTIC 自己产生）；缺失时 P5/GS 自动跳过并提示，P7–P9 回退到 seg 推导的窗口值。
 
 ## 模块
 
@@ -129,9 +131,9 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS 另需各队列
 | F | 实验特有信号占比（vs 对照）：count / freq / −log10(q) / G-score 四种权重 |
 | G | 对照参考面板打分（**数值来自 preset**；未配置则跳过） |
 
-### pairwise（P1–P5, CF, GS）
+### pairwise（P1–P10, PQ, PD, CF, GS）
 
-> **定位区分**：P1–P3 回答**检出/一致性**——「两队列各自显著（GISTIC 峰）之后，峰清单/调用是否重合」，不是组间差异检验；低幅度/宽/低频的组间差异天生成不了峰。**P4/P5** 才回答**组间差异**——「两队列在同一区域的 CN 分布是否不同」，不依赖 GISTIC 峰。
+> **定位区分**：P1–P3 回答**检出/一致性**——「两队列各自显著（GISTIC 峰）之后，峰清单/调用是否重合」，不是组间差异检验；低幅度/宽/低频的组间差异天生成不了峰。**P4–P7** 回答**组间差异**——「两队列在同一区域的 CN 分布是否不同」，不依赖 GISTIC 峰（P7 的 peak 层除外）。P8 是全局多变量摘要，**P9 是所有逐位点结果的前置背景层**，**P10 是负担受控的峰检验**，**PQ/PD 是质量闸门**（膨胀与批次/基线诊断）。
 
 | ID | 定位 | 内容 |
 |----|------|------|
@@ -140,6 +142,13 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS 另需各队列
 | **P3** | 建模 | 逐峰 `altered ~ cohort [+ 单协变量]` logistic、BH-FDR；无 meta 跳过 |
 | **P4** | **组间差异（CBS 分段）** | `tumors.seg` 切固定窗（默认 1 Mb）→ 二值化 → Fisher + MW + FDR、区域合并、null 校准、**最小可检出差异（MDE）表** |
 | **P5** | **组间差异（marker 矩阵）** | 与 P4 同构，输入换成 `D.cap1.5.mat` 重采样到同一网格 |
+| **P6** | **臂级 broad 景观** | 每臂 Amp/Del 频率差 + Fisher/FDR、每样本非整倍体评分（broad 事件数/臂占比）+ MW；输入优先 `broad_values_by_arm.txt`，缺失时按 seg 推导（来源记录在表内） |
+| **P7** | **altered 内部幅度** | 频率（Fisher）与**altered 样本内部的幅度**（MW + rank-biserial）双轴：高幅度比例（≥0.9）、freq×amp 四象限分类（freq_driven / amp_driven / both / neither）；窗口/band（D 矩阵）+ peak（all_lesions `- CN values` 行）三层 |
+| **P8** | **多变量整体可分性** | PERMANOVA（伪 F + 置换 p，配对设计层内置换）、PCA、交叉验证 AUC（L2/弹性网 + 置换零分布）、bootstrap 稳定性选择；特征默认 1 Mb 窗（与峰检出无关），union peaks 模式有循环偏倚仅作描述 |
+| **P9** | **三级负荷评分 + wGII** | 每样本 focal/arm/chromosome 三级事件计数（幅度加权 \|C\|，合并样本内秩归一化）+ 不依赖 GISTIC 的 wGII（倍性自适应基线）；回答「哪个队列整体更乱、差异来自 focal 还是 broad」——是解读所有逐位点结果的前置背景层 |
+| **P10** | **负担受控逐峰置换** | union 峰 × 样本二值矩阵上**同时固定行和（每样本峰数）与列和（每峰频率）**的置换检验；对照 naive p 直接量化负担假阳性（burden_flag）；含着丝粒/端粒峰与高 segment 样本 QC |
+| **PQ** | **p 值质检** | 自动读取本次运行的 P3/P4/P5/GS/P7/P10 全部 p 值集合：Q-Q 图 + 基因组膨胀因子 λ=median(z²)/0.4549（λ>1.1 = 系统性偏倚，先解决再引用结果） |
+| **PD** | **λ 膨胀的批次/基线诊断** | 每样本基线（中性段 seg_mean 中位数）检查 + Δmedian 空间结构轨迹 + **样本内中心化敏感性**：P4 式检验在原始/中心化两套数据各跑一遍，λ 对比 + 每窗口可信度分层（robust / baseline_only / centered_only / ns） |
 | **CF** | 混杂敏感性 | 只读 P4/P5 表 + 每队列边际分布：E-value、最小解释效应 δ*、偏差上界/去偏下界（**定界**而非校正） |
 | **GS** | 振幅差分 | 逐窗/逐 band G-score 组间差 + 置换检验（normal 或 MC） |
 
@@ -164,11 +173,18 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS 另需各队列
 - 置换：保留长度多重集 + 每染色体峰计数；p=(k+1)/(n+1)
 - `genes.max_wide_len_mb_amp: 30` / `max_wide_len_mb_del: 10`
 - P4：`bin_size: 1000000`、`amp_thr: 0.1`、`del_thr: -0.1`、`fdr: 0.05`、`null_splits: 20`、`seed: 42`
+- P6：`broad.amp_thr: 0.3`、`del_thr: -0.3`、`min_frac: 0.5`（seg 推导时的臂调用阈值）
+- P7：`amplitude.amp_thr: 0.1`、`del_thr: -0.1`、`high_amp: 0.9`、`high_del: -0.9`（对齐 GISTIC 自己的振幅阈值 0/0.1/0.9）
+- P8：`multivariate.features: grid|cytoband|peaks`、`n_perm: 999`、`n_auc_perm: 100`、`n_boot: 50`、`penalty: l2|elasticnet`
+- P9：`burden.arm_thr: 0.25`、`arm_min_frac: 0.70`、`arm_match_diff: 0.10`、`focal_thr: 0.25`、`focal_broad_overlap_max: 0.5`、`sensitivity: true`（81 组合参数网格）
+- P10：`permtest.cn_thr: 0.25`、`n_perm: 10000`、`stat: zprop|wald`、`max_segments: 2000`
+- PQ：无需配置（自动发现本次运行的 p 值集合）
+- PD：`diag.neutral_band: 0.25`、`smooth_windows: 20`
 
 ## 测试
 
 ```bash
-pytest        # 27 个测试：解析/配置/区间/统计 + 两条 workflow 端到端（合成数据）
+pytest        # 65 个测试：解析/配置/区间/统计 + 两条 workflow 端到端（合成数据）+ P6–P10/PQ/PD 单测
 ruff check src tests
 ```
 

@@ -53,7 +53,8 @@ Label placement follows one rule everywhere:
 
 Applied to: CF E-value volcano + required-effect scatter, GS volcano (band /
 window), GS genome Manhattan panels, P1 unique-peak genome, P2 McNemar
-volcano.
+volcano, P7 quadrants/volcanoes (labels only on units significant on at
+least one axis), P10 volcano, P8 stability panels.
 
 - No descriptive titles inside figures — keep captions in your manuscript.
 

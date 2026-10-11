@@ -5,8 +5,9 @@
 #
 #   gistic-compare --config config.pairwise.yaml --all
 #
-# P5 / GS additionally need each cohort's <prefix>.D.cap1.5.mat; those modules
-# are skipped with a notice when the file is missing.
+# All modules run independently; one failing module does not abort the rest
+# (unless --fail-fast). P5/GS additionally need <prefix>.D.cap1.5.mat and are
+# skipped with a notice when it is missing. P8 needs scikit-learn.
 
 workflow: pairwise
 genome: hg19
@@ -72,6 +73,49 @@ analysis:
     method: normal                # normal = exact SD + normal tail; or mc
     perm: 2000
     seed: 42
+  # P6: arm-level broad landscape. GISTIC's broad_values_by_arm.txt is used
+  # when present in every cohort; otherwise arm calls are derived from
+  # tumors.seg with these thresholds.
+  # broad:
+  #   amp_thr: 0.3
+  #   del_thr: -0.3
+  #   min_frac: 0.5
+  # P7: amplitude among altered samples (GISTIC's own 0.1 / 0.9 thresholds).
+  # amplitude:
+  #   amp_thr: 0.1
+  #   del_thr: -0.1
+  #   high_amp: 0.9
+  #   high_del: -0.9
+  #   fdr: 0.05
+  # P8: multivariate separation (needs scikit-learn).
+  # multivariate:
+  #   features: grid              # grid | cytoband | peaks (peaks = circular)
+  #   n_perm: 999                 # PERMANOVA permutations
+  #   n_auc_perm: 100             # AUC permutation null
+  #   n_boot: 50                  # stability-selection refits
+  #   top_k: 20
+  #   penalty: l2                 # l2 | elasticnet
+  #   min_n: 5
+  # P9: three-level SCNA burden (Yuan et al. 2018 parameterisation).
+  # burden:
+  #   arm_thr: 0.25               # amplitude threshold for events
+  #   arm_min_frac: 0.70          # >70% of the arm's length = broad event
+  #   arm_match_diff: 0.10        # two arms "same value" = log2 diff < 0.1
+  #   focal_thr: 0.25
+  #   focal_broad_overlap_max: 0.5
+  #   sensitivity: true           # 81-combo parameter grid (slower)
+  # PD: baseline/batch diagnostic for the lambda inflation.
+  # diag:
+  #   neutral_band: 0.25          # |seg_mean| < band = neutral segments
+  #   smooth_windows: 20          # rolling mean of the shift track
+  # P10: burden-controlled permutation on peaks.
+  # permtest:
+  #   cn_thr: 0.25
+  #   n_perm: 10000
+  #   stat: zprop                 # zprop (vectorised, no covariates) | wald
+  #   exclude_centromere_telomere: true
+  #   max_segments: 2000
+  # PQ needs no config: it QC's every p-value set the run has produced.
 
 output:
   figure:

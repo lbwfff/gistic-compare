@@ -66,12 +66,14 @@ def sort_peaks(df: pd.DataFrame) -> pd.DataFrame:
 # all_lesions.conf_90.txt
 # ---------------------------------------------------------------------------
 
-def load_all_lesions(path: str | Path, cohort: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_all_lesions(path: str | Path, cohort: str,
+                     return_cn: bool = False):
     """Parse all_lesions file.
 
     GISTIC writes each peak twice: a summary row with 0/1/2 calls and a
     ``- CN values`` row with continuous per-sample CN. Only summary rows are
-    used for peaks/calls; CN-value rows are returned separately.
+    used for peaks/calls; CN-value rows are returned separately when
+    ``return_cn`` is true (used by module P7).
 
     Returns
     -------
@@ -80,6 +82,8 @@ def load_all_lesions(path: str | Path, cohort: str) -> tuple[pd.DataFrame, pd.Da
         wide_peak/peak/region (chrom,start,end), q, residual_q, n_altered_samples
     calls : DataFrame
         long format per-sample calls: peak_id, sample, call(0/1/2)
+    cn : DataFrame  (only when return_cn=True)
+        long format per-sample continuous CN: peak_id, sample, cn
     """
     path = Path(path)
     df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
@@ -99,11 +103,28 @@ def load_all_lesions(path: str | Path, cohort: str) -> tuple[pd.DataFrame, pd.Da
 
     rows = []
     call_rows = []
+    cn_rows = []
+    uname_to_pid: dict[str, str] = {}
     n_skipped_cn = 0
     for i, r in df.iterrows():
         uname = str(r["Unique Name"]).strip()
         if "CN values" in uname:
             n_skipped_cn += 1
+            if return_cn:
+                base = uname.replace("- CN values", "").strip()
+                pid = uname_to_pid.get(base)
+                if pid is None:
+                    continue
+                for sc in sample_cols:
+                    v = str(r[sc]).strip()
+                    if v == "":
+                        continue
+                    try:
+                        cn = float(v)
+                    except ValueError:
+                        continue
+                    if np.isfinite(cn):
+                        cn_rows.append((pid, sc, cn))
             continue
         if uname.lower().startswith("amplification"):
             ptype = "Amp"
@@ -124,6 +145,7 @@ def load_all_lesions(path: str | Path, cohort: str) -> tuple[pd.DataFrame, pd.Da
 
         peak_id = f"{cohort}:{ptype}:{i}"
         cytoband = str(r["Descriptor"]).strip()
+        uname_to_pid[uname] = peak_id
 
         rows.append(dict(
             cohort=cohort, peak_id=peak_id, uname=uname, type=ptype,
@@ -167,7 +189,130 @@ def load_all_lesions(path: str | Path, cohort: str) -> tuple[pd.DataFrame, pd.Da
     n_samples = calls["sample"].nunique()
     peaks["freq_altered"] = peaks["n_altered_samples"] / n_samples if n_samples else np.nan
 
+    if return_cn:
+        cn = pd.DataFrame(cn_rows, columns=["peak_id", "sample", "cn"])
+        return peaks, calls, cn
     return peaks, calls
+
+
+# ---------------------------------------------------------------------------
+# broad_values_by_arm.txt  /  amp_qv / del_qv (arm-level q-values)
+# ---------------------------------------------------------------------------
+
+def _arm_key(arm: str) -> str | None:
+    """Normalize an arm label ('1p', 'chr1p', '1 p') -> '1p'; None if invalid."""
+    s = str(arm).strip().lower().replace("chr", "").replace(" ", "")
+    if len(s) < 2 or not s[0].isdigit():
+        return None
+    if s[1] not in ("p", "q"):
+        return None
+    num = s[:len(s) - 1]
+    if not num.isdigit():
+        return None
+    return f"{int(num)}{s[-1]}"
+
+
+def load_broad_by_arm(path: str | Path, cohort: str) -> pd.DataFrame:
+    """Parse broad_values_by_arm.txt (per-sample arm-level broad calls).
+
+    Handles the two value conventions seen in the wild:
+      * 0/1/2 — 1 = broad amplification, 2 = broad deletion
+      * 0/1/-1 — 1 = broad amplification, -1 = broad deletion
+    The convention is auto-detected from the value domain (any negative
+    value selects the sign convention).  Rows/columns are auto-oriented.
+
+    Returns a long DataFrame: cohort, sample, arm ('1p'...'22q'), type
+    (Amp/Del) — one row per (sample, arm) that carries a broad event.
+    """
+    path = Path(path)
+    df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
+    df.columns = [str(c).strip() for c in df.columns]
+    first = df.columns[0]
+    cols = [c for c in df.columns[1:]]
+    col_is_arm = all(_arm_key(c) for c in cols) and len(cols) > 0
+    if col_is_arm:
+        # orientation A: rows = samples, columns = arms
+        arms = [_arm_key(c) for c in cols]
+        samples = df[first].astype(str).str.strip()
+        mat = df[cols].apply(pd.to_numeric, errors="coerce").to_numpy(float)
+    else:
+        # orientation B: rows = arms, columns = samples
+        arms = [_arm_key(v) for v in df[first]]
+        sample_cols = cols
+        if not all(a for a in arms):
+            return pd.DataFrame(columns=["cohort", "sample", "arm", "type"])
+        samples = sample_cols
+        mat = (df[sample_cols]
+               .apply(pd.to_numeric, errors="coerce").to_numpy(float)).T
+    # drop columns whose arm label could not be parsed, keeping mat aligned
+    valid = [i for i, a in enumerate(arms) if a]
+    if not valid or mat.size == 0:
+        return pd.DataFrame(columns=["cohort", "sample", "arm", "type"])
+    arms = [arms[i] for i in valid]
+    mat = mat[:, valid]
+
+    rows = []
+    sign_mode = bool((mat < 0).any().any())
+    for ai, arm in enumerate(arms):
+        col = mat[:, ai]
+        for si, s in enumerate(samples):
+            v = col[si]
+            if not np.isfinite(v) or v == 0:
+                continue
+            if sign_mode:
+                t = "Amp" if v > 0 else "Del"
+            else:
+                t = "Amp" if v == 1 else ("Del" if v == 2 else None)
+            if t is None:
+                continue
+            rows.append(dict(cohort=cohort, sample=str(s), arm=arm, type=t))
+    return pd.DataFrame(rows, columns=["cohort", "sample", "arm", "type"])
+
+
+def load_arm_qv(path: str | Path, cohort: str, ptype: str) -> pd.DataFrame:
+    """Parse amp_qv / del_qv.conf_XX.txt (arm-level q-values), best effort.
+
+    The exact layout varies between GISTIC versions, so this parser is
+    tolerant: it expects one label column (arm names) plus one numeric
+    q-value column, in either orientation.  Returns a long DataFrame
+    (cohort, arm, q) or an empty frame when the file cannot be interpreted;
+    the values are display-only (see docs/stats.md).
+    """
+    path = Path(path)
+    try:
+        df = pd.read_csv(path, sep="\t", dtype=str, keep_default_na=False)
+    except Exception:
+        return pd.DataFrame(columns=["cohort", "arm", "q"])
+    if df.empty:
+        return pd.DataFrame(columns=["cohort", "arm", "q"])
+    df.columns = [str(c).strip() for c in df.columns]
+
+    def _q_from_cols(sub: pd.DataFrame, label_col: str) -> pd.DataFrame | None:
+        for c in sub.columns:
+            if c == label_col:
+                continue
+            v = pd.to_numeric(sub[c], errors="coerce")
+            if v.notna().sum() >= max(1, int(0.5 * len(sub))):
+                arms = [_arm_key(x) for x in sub[label_col]]
+                out = pd.DataFrame(dict(arm=arms, q=v.to_numpy(float)))
+                out = out[out["arm"].notna() & out["q"].notna()]
+                if len(out):
+                    return out
+        return None
+
+    out = _q_from_cols(df, df.columns[0])
+    if out is None:
+        # transposed layout: arm labels in the first data row
+        sub = df.T
+        sub.columns = sub.iloc[0]
+        sub = sub.reset_index()
+        out = _q_from_cols(sub, sub.columns[0])
+    if out is None:
+        print(f"  [io] {cohort}: could not parse arm q-values from "
+              f"{path.name} (ignored)")
+        return pd.DataFrame(columns=["cohort", "arm", "q"])
+    out.insert(0, "cohort", cohort)
+    return out.reset_index(drop=True)
 
 
 def apply_limit_field(peaks: pd.DataFrame, field: str = "wide_peak") -> pd.DataFrame:
@@ -349,7 +494,8 @@ def load_cohort(cfg: dict[str, Any], cid: str) -> dict[str, Any]:
     def p(suffix: str) -> Path:
         return d / f"{prefix}.{suffix}"
 
-    peaks, calls = load_all_lesions(p("all_lesions.conf_90.txt"), cid)
+    peaks, calls, peak_cn = load_all_lesions(p("all_lesions.conf_90.txt"),
+                                             cid, return_cn=True)
     limit_field = cfg["analysis"].get("peak_limit_field", "wide_peak")
     peaks = apply_limit_field(peaks, limit_field)
 
@@ -362,9 +508,21 @@ def load_cohort(cfg: dict[str, Any], cid: str) -> dict[str, Any]:
     seg_counts = load_sample_seg_counts(p("sample_seg_counts.txt"), cid)
     bed = load_regions_bed(p("regions_track.conf_90.bed"), cid)
 
+    # optional arm-level outputs (module P6); absent in many GISTIC runs
+    broad = None
+    broad_path = p("broad_values_by_arm.txt")
+    if broad_path.exists():
+        broad = load_broad_by_arm(broad_path, cid)
+    arm_qv = {}
+    for ptype, suffix in (("Amp", "amp_qv.conf_90.txt"),
+                          ("Del", "del_qv.conf_90.txt")):
+        qp = p(suffix)
+        if qp.exists():
+            arm_qv[ptype] = load_arm_qv(qp, cid, ptype)
+
     return dict(id=cid, label=c["label"], peaks=peaks, calls=calls,
-                genes=genes, scores=scores, seg=seg,
-                seg_counts=seg_counts, bed=bed)
+                peak_cn=peak_cn, genes=genes, scores=scores, seg=seg,
+                seg_counts=seg_counts, bed=bed, broad=broad, arm_qv=arm_qv)
 
 
 def load_all(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:

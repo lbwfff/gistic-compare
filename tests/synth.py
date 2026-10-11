@@ -73,9 +73,12 @@ def write_all_lesions(path: Path, cohort: str, samples: list[str]) -> None:
                     "Broad or Focal", "Amplitude Threshold"])
         calls = pk["calls"][call_key]
         summary += [str(c) for c in calls]
+        # CN values row: continuous per-sample copy change; altered samples
+        # carry the direction-specific value so P7's peak layer has signal
+        sign = 1.0 if pk["utype"] == "amplification" else -1.0
+        cn_vals = [f"{sign * (0.6 if c > 0 else 0.0):.4g}" for c in calls]
         cn = ([pk["utype"] + f"({pk['desc']}) - CN values", pk["desc"], coord,
-               coord, coord, "NA", "NA", "NA", "NA"]
-              + ["0.35"] * len(calls))
+               coord, coord, "NA", "NA", "NA", "NA"] + cn_vals)
         rows.append(summary)
         rows.append(cn)
     with open(path, "w") as fh:
@@ -129,7 +132,8 @@ def write_scores(path: Path, cohort: str) -> None:
 
 
 def write_seg(path: Path, cohort: str, samples: list[str]) -> None:
-    """chr1 5-10 Mb carries the between-cohort signal for P4/P5."""
+    """chr1 5-10 Mb carries the between-cohort focal signal for P4/P5/P7;
+    chr2q is broadly amplified in every A sample (broad signal for P6)."""
     with open(path, "w") as fh:
         fh.write("Sample\tChromosome\tStart\tEnd\tNum_Probes\tSegment_Mean\n")
         for si, s in enumerate(samples):
@@ -140,6 +144,10 @@ def write_seg(path: Path, cohort: str, samples: list[str]) -> None:
                     mid = 0.4 if cohort == "A" else -0.3
                     fh.write(f"{s}\tchr1\t5000000\t10000000\t200\t{mid}\n")
                     fh.write(f"{s}\tchr1\t10000000\t{size}\t800\t0.0\n")
+                elif c == 2:
+                    # whole chromosome at 0.5 in A (broad 2q amp), 0 in B
+                    broad = 0.5 if cohort == "A" else 0.0
+                    fh.write(f"{s}\tchr2\t0\t{size}\t300\t{broad}\n")
                 else:
                     fh.write(f"{s}\tchr{c}\t0\t{size}\t300\t0.0\n")
 
@@ -176,8 +184,15 @@ def write_marker_mat(path: Path, cohort: str, samples: list[str]) -> None:
     pos = np.asarray(pos, dtype=np.int64)
     chrn = np.asarray(chrn, dtype=np.float64)
 
-    nseg_per_sample = 12
-    breaks = np.linspace(0, M, nseg_per_sample + 1).astype(np.int64)
+    # segment boundaries: a coarse tiling plus exact breakpoints around the
+    # chr1 5-10 Mb region so the differential segment covers its markers
+    region_idx = np.flatnonzero((pos >= 5_000_000) & (pos <= 10_000_000)
+                                & (chrn == 1))
+    lo, hi = int(region_idx[0]), int(region_idx[-1]) + 1
+    breaks = np.linspace(0, M, 13).astype(np.int64)
+    breaks = np.array(sorted(set(breaks.tolist()) | {lo, hi}), dtype=np.int64)
+    nseg_per_sample = len(breaks) - 1
+    region_seg = int(np.flatnonzero(breaks == lo)[0])
     ir = breaks[:-1].astype(np.float64)
 
     sdesc = np.zeros((12, len(samples)))
@@ -196,19 +211,50 @@ def write_marker_mat(path: Path, cohort: str, samples: list[str]) -> None:
         jc = np.arange(len(samples) + 1, dtype=np.float64) * nseg_per_sample
         pg.create_dataset("jc", data=jc)
         pg.create_dataset("ir", data=np.tile(ir, len(samples)))
-        # per-sample segment values: A up / B down on chr1 5-10 Mb markers
-        in_region = ((pos >= 5_000_000) & (pos <= 10_000_000) & (chrn == 1))
+        # per-sample segment values: A up / B down on the chr1 region markers
         vals = []
         for j in range(len(samples)):
             sv = rng.normal(0.0, 0.05, nseg_per_sample)
-            # segment containing the chr1 region markers (segment index 3
-            # covers ~ M*3/12); set its value by cohort
-            sv[3] = 0.6 if cohort == "A" else -0.6
-            # markers actually in the region get the region value via
-            # per-marker assignment below
+            sv[region_seg] = 0.6 if cohort == "A" else -0.6
             vals.append(sv)
         o = np.concatenate(vals).astype(np.float64)
         refs.create_dataset("o", data=o.reshape(1, -1))
+
+
+def write_broad_values_by_arm(path: Path, cohort: str,
+                              samples: list[str]) -> None:
+    """Arm-level broad calls (0/1/2 convention: 1=amp, 2=del).
+
+    Cohort A: 2q amp in every sample (matches the chr2 seg signal) and 1q
+    amp in 5/8 (Fisher-differentiable); cohort B: 3q del in 3/8.
+    """
+    arms = [f"{n}{s}" for n in (1, 2, 3) for s in ("p", "q")]
+    spec: dict[tuple[str, str], int] = {}
+    if cohort == "A":
+        for s in samples:
+            spec[(s, "2q")] = 1
+        for s in samples[:5]:
+            spec[(s, "1q")] = 1
+    else:
+        for s in samples[:3]:
+            spec[(s, "3q")] = 2
+    with open(path, "w") as fh:
+        fh.write("\t".join(["sample"] + arms) + "\n")
+        for s in samples:
+            vals = []
+            for a in arms:
+                v = spec.get((s, a), 0)
+                vals.append({0: "0", 1: "1", 2: "2"}[v])
+            fh.write("\t".join([s] + vals) + "\n")
+
+
+def write_arm_qv(path: Path, cohort: str) -> None:
+    """Minimal arm-level q-value table (arm + q), P6 display-only input."""
+    arms = ["1p", "1q", "2p", "2q", "3p", "3q"]
+    with open(path, "w") as fh:
+        fh.write("arm\tq\n")
+        for i, a in enumerate(arms):
+            fh.write(f"{a}\t{0.01 * (i + 1):.4g}\n")
 
 
 def make_cohort_dir(root: Path, cohort: str, prefix: str) -> Path:
@@ -223,4 +269,8 @@ def make_cohort_dir(root: Path, cohort: str, prefix: str) -> Path:
     write_seg_counts(d / f"{prefix}.sample_seg_counts.txt", samples)
     write_regions_bed(d / f"{prefix}.regions_track.conf_90.bed", cohort)
     write_marker_mat(d / f"{prefix}.D.cap1.5.mat", cohort, samples)
+    write_broad_values_by_arm(d / f"{prefix}.broad_values_by_arm.txt",
+                              cohort, samples)
+    write_arm_qv(d / f"{prefix}.amp_qv.conf_90.txt", cohort)
+    write_arm_qv(d / f"{prefix}.del_qv.conf_90.txt", cohort)
     return d

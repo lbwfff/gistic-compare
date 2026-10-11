@@ -3,6 +3,95 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Module PD (pairwise) — baseline/batch diagnostic**: per-sample
+  baselines (median of neutral segments), genome-wide shift-structure
+  tracks, and the centering-sensitivity experiment — P4-style window
+  tests re-run on within-sample centered segments, with lambda compared
+  raw-vs-centered and every window assigned a trust layer (robust /
+  baseline_only / centered_only / ns).  Answers *why* PQ flags inflation
+  and which loci survive baseline removal.  Outputs: `PD_lambda.tsv`,
+  `PD_shift_regions.tsv`, `PD_shift_track.tsv`, `PD_baselines.tsv`,
+  `PD_summary.tsv`; figures: baseline distributions, shift track, lambda
+  bars.
+- **P9 parameter sensitivity** (`analysis.burden.sensitivity: true`):
+  81-combo grid over `arm_min_frac` x `arm_match_diff` x `focal_thr` x
+  `focal_broad_overlap_max` with a per-metric sign-consistency verdict —
+  the robustness statement for the burden conclusions.  Outputs:
+  `P9_sensitivity.tsv`, `P9_sensitivity_summary.tsv`; figure:
+  `P9_sensitivity`.
+- **Module P10 (pairwise) — burden-controlled permutation on peaks**
+  (adopted from Yuan et al., Cancer Cell 2018): union-peak x sample binary
+  matrix (direction-matched `- CN values` at +/-0.25) with a margin-
+  preserving permutation (row sums = per-sample peak counts, column sums =
+  per-peak frequencies; vectorised checkerboard swaps) so only peak-
+  specific preferential hitting is testable. Every peak carries its naive
+  p alongside — the naive-vs-permutation gap quantifies burden-induced
+  inflation (`burden_flag`). Peak QC: invariable, centromere/telomere and
+  high-segment samples/peaks dropped. Outputs: `P10_peak_perm.tsv`,
+  `P10_summary.tsv`; figures: volcano, naive-vs-permutation scatter, Z
+  histogram.
+- **Module PQ (pairwise) — p-value QC**: reads the run's saved P3/P4/P5/
+  GS/P7/P10 tables and reports, per p-value set, the genomic inflation
+  factor lambda = median(z^2)/0.4549 plus a Q-Q figure; P10's naive and
+  permutation p are kept as separate sets (their lambda gap = the removed
+  burden inflation). lambda > 1.1 is flagged as systematic bias.
+  Outputs: `PQ_inflation.tsv`; figures: `PQ_qq_*`.
+- **Module P9 (pairwise) — three-level SCNA burden + wGII** (adopted from
+  Yuan et al., Cancer Cell 2018): per-sample copy-number events counted
+  separately at focal, arm and chromosome scales (amplitude-weighted |C|,
+  focal events from the GISTIC marker matrix with broad-overlap exclusion),
+  rank-normalized within the pooled two-cohort set, plus the
+  GISTIC-independent wGII (ploidy-adjusted). Cohort effects via OLS beta +
+  Mann-Whitney. Outputs: `P9_burden_scores.tsv`, `P9_burden_tests.tsv`,
+  `P9_crosscheck.tsv`, `P9_summary.tsv`; figures: burden distributions,
+  effect forest, focal-vs-broad decomposition.
+- **Module P6 (pairwise) — arm-level broad landscape**: per-arm Amp/Del
+  frequency differences (Fisher + BH) and per-sample aneuploidy metrics
+  (broad-amp/del counts, fraction of arms altered; Mann-Whitney +
+  rank-biserial). Uses GISTIC's `broad_values_by_arm.txt` when every cohort
+  provides it, otherwise derives arm calls from `tumors.seg` (thresholds
+  `analysis.broad.*`; the source is recorded in every table). Arm q-values
+  from `amp_qv`/`del_qv` are attached display-only when present.
+  Outputs: `P6_arm_diff.tsv`, `P6_aneuploidy.tsv`, `P6_aneuploidy_tests.tsv`,
+  `P6_summary.tsv`; figures: `P6_arm_landscape`, `P6_aneuploidy`.
+- **Module P7 (pairwise) — amplitude among altered samples**: splits each
+  locus's between-cohort signal into a frequency axis (Fisher) and an
+  amplitude axis (Mann-Whitney + rank-biserial **within the altered
+  samples**), plus a high-level fraction test among altered samples and a
+  freq×amplitude quadrant classification (freq_driven / amp_driven / both /
+  neither). Three unit layers: 1 Mb windows and cytobands (GISTIC's
+  `D.cap1.5.mat`, seg-derived fallback) and union peaks (the previously
+  discarded `- CN values` rows of all_lesions, now parsed).
+  Outputs: `P7_window_amplitude.tsv`, `P7_band_amplitude.tsv`,
+  `P7_peak_amplitude.tsv`, `P7_summary.tsv`; figures: quadrants, volcanoes,
+  per-sample amplitude strips of the strongest units.
+- **Module P8 (pairwise) — multivariate cohort separation**: PERMANOVA
+  (pseudo-F, R², permutation p; within-pair restricted permutation for
+  paired designs), PCA coordinates, out-of-fold cross-validated AUC of an
+  L2/elastic-net logistic classifier with a permutation null, and bootstrap
+  stability selection. Feature sets: 1 Mb grid (default, peak-call
+  independent), cytoband, union peaks (documented circularity). Requires
+  scikit-learn (new dependency). Outputs: `P8_separation.tsv`,
+  `P8_pca_coords.tsv`, `P8_stability.tsv`, `P8_summary.tsv`; figures: PCA,
+  AUC permutation null, stability bars.
+- `io_gistic.load_all_lesions(..., return_cn=True)` now exposes the
+  per-sample continuous CN rows (`peak_cn`), plus new parsers
+  `load_broad_by_arm` (0/1/2 and 0/1/−1 conventions auto-detected) and
+  `load_arm_qv`.
+- Statistical caveats for P6/P7/P8 in `docs/stats.md`; pairwise workflow
+  README tables now document P1–P8 + CF + GS.
+
+### Changed
+- `scikit-learn>=1.3` added to dependencies (module P8); sklearn's
+  post-1.8 `penalty` deprecation is handled (`l1_ratio` API).
+- Synthetic test bundle now also writes `broad_values_by_arm.txt`,
+  `amp_qv`/`del_qv` tables, differentiates all_lesions `- CN values` rows
+  by direction/alteredness, and carries a broad chr2q signal; test suite
+  grows to 65 tests.
+
 ## [0.1.0] - 2026-10-07
 
 First open-source release. Reorganized from the internal

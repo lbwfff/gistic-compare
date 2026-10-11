@@ -86,7 +86,12 @@ def build_union_keys(cfg: dict[str, Any], data: dict[str, dict],
 
     rows = []
     for pid, m in meta.items():
-        rows.append({**m, "peak_key": f"{m['ptype']}:{uf.find(pid)}"})
+        root = uf.find(pid)
+        rm = meta[root]
+        # human-readable key: direction + the coordinates of the chain's
+        # root peak (internal ids like 'cue:Del:34' mean nothing to readers)
+        rows.append({**m, "peak_key":
+                     f"{m['ptype']}:{rm['chrom']}:{rm['start']}-{rm['end']}"})
     return pd.DataFrame(rows)
 
 

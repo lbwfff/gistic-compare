@@ -25,3 +25,7 @@ results/
 meta/
 report/
 *.log
+
+# --- local data + local-only configs (never commit) ---
+GSEdata/
+config.local*.yaml

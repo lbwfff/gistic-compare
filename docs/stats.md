@@ -85,3 +85,152 @@ Unit = sample × union-peak. Crude OR from `altered ~ cohort`; each covariate
 is added one at a time (single-covariate adjusted OR). Sample-level
 correlation within paired designs is ignored (the McNemar in P2 covers that
 setting).
+
+## Module P6 — arm-level broad landscape
+
+When GISTIC's own `broad_values_by_arm.txt` is present in **every** cohort it
+is used; otherwise arm calls are **derived from `tumors.seg`** (arm called
+altered when ≥ `min_frac` of its length is covered by segments beyond
+±`amp_thr`/`del_thr`, defaults 0.3/−0.3). The source is recorded in the
+`source` column (`gistic` vs `derived_seg`) — the two definitions are related
+but not identical, and one run always uses a single source. Arm q-values
+(`amp_qv`/`del_qv`) are display-only: like GS, the difference of two
+cohort-specific q-values has no null and is not tested. BH-FDR across ~39
+arms per direction is far more defensible than per-window FDR, but arms are
+still correlated (whole-arm events co-occur with aneuploidy); treat the
+per-arm FDR as exploratory and the per-sample aneuploidy-score test as the
+primary cohort-level readout.
+
+## Module P7 — amplitude among altered samples
+
+Alteredness at a unit is defined per sample from that sample's own value
+(unit amplitude > `amp_thr`), so the altered subset does not depend on
+cohort labels; the Mann-Whitney on amplitudes **within the altered subset**
+is therefore an exact two-sample test — no extra permutation is needed.
+Caveats: (i) with very few altered samples on one side the amplitude test is
+underpowered and the table reports the counts (`n_alt_*`) so this is visible;
+(ii) `p_high` compares high-level fractions **among altered samples only**
+(Fisher), which is a different question from the frequency test — read the
+two together, never alone; (iii) the peak layer reuses union peaks, so
+loci called as peaks in only one cohort have no between-cohort statistics
+(`present_*` = a_only/b_only); (iv) the freq×amplitude quadrant classes are
+built from the same FDR thresholds — they are a descriptive taxonomy, not
+independent tests. GISTIC's own amplitude thresholds (0.1 / 0.9, as printed
+in the `Amplitude Threshold` column of all_lesions) are the defaults.
+
+## Module P8 — multivariate separability
+
+Three statistics per comparison: PERMANOVA pseudo-F with label permutation
+(paired designs permute **within pairs** — restricted permutation), an
+out-of-fold cross-validated AUC of an L2 (or elastic-net) logistic
+classifier with its own permutation null, and bootstrap stability selection.
+Non-negotiable caveats:
+
+- **Separability is not biology.** Batch, platform, sample provenance and
+  processing pipelines separate cohorts exactly like real CN differences do.
+  The permutation p only says the observed separation exceeds what random
+  labels produce *within this dataset*; it says nothing about the cause.
+  Read P8 with module CF and, ideally, balance the design.
+- **Feature choice matters.** The default `grid` features (1 Mb windows) are
+  independent of peak calling. `peaks` features are **circular** (peaks were
+  selected from these same cohorts, so separability is expected even under
+  the null) — use them descriptively only.
+- The OOF-AUC permutation null uses the same CV folds; with n ≲ 30 per
+  cohort the AUC confidence is wide — report `auc_perm_p` alongside, never
+  the bare AUC.
+- Stability selection frequencies describe the fitted model, not effect
+  sizes; cross-check the top features against P4/P7/GS per-locus tables.
+
+## Module P9 — three-level SCNA burden + wGII
+
+Per-sample burden counted at three scales (focal / arm / chromosome), each
+event weighted by amplitude |C| (2 at |c|≥1, 1 at |c|≥0.25), rank-normalized
+on the **pooled** two-cohort sample set, plus wGII (ploidy-adjusted,
+copy-number units).
+
+- **Read P4–P8 against this panel.** A cohort with globally higher burden
+  shows higher frequency at *every* locus; a significant per-locus result
+  with a burden asymmetry may just reflect the background, not the locus.
+- **Rank normalization constrains the means**: by construction each
+  percentile metric averages ~0.5 in the pooled set, so the OLS beta is a
+  *relative positioning* effect, not an absolute-load difference. The raw
+  medians (`median_a`/`median_b`) are the absolute-scale summary; report
+  both.
+- **The S/wGII/FGA cross-checks** (`P9_crosscheck.tsv`) should show
+  moderate-to-strong positive correlation (ρ ≳ 0.4). A weak ρ means the
+  definitions disagree and something needs investigation.
+- The focal definition (thresholded GISTIC marker matrix, merged adjacent
+  equal-C intervals, broad-overlapping intervals dropped) is a
+  reproduction-specific parameterisation (Yuan et al. 2018 gives no
+  executable definition) — sensitivity-analyse `focal_thr` and
+  `focal_broad_overlap_max` before quoting numbers.
+- With metadata, covariates are added as a single block (not one at a
+  time); without metadata the comparison is unadjusted — clinical
+  confounding can only be bounded (module CF).
+
+## Module PD — baseline/batch diagnostic
+
+PD explains *why* module PQ flags inflation and what survives it.
+
+- **Baseline check**: each sample's baseline is the median `seg_mean` over
+  neutral segments (|c| < `neutral_band`, default 0.25). A between-cohort
+  baseline difference is the classic batch signature.
+- **Shift structure**: the per-window median difference along the genome.
+  A roughly uniform offset = pure batch/plane effect; regional structure
+  (e.g. whole arms) is more likely biology or a real CN difference.
+- **Centering sensitivity**: the P4-style window tests are re-run on
+  within-sample centered segments (baseline subtracted). Windows
+  significant in both variants are **robust** (quotable); windows
+  significant only before centering are **baseline-shift candidates** and
+  must be downgraded.
+- Centering also removes true whole-sample scale differences (real
+  aneuploidy shifts) — always read it together with module P9, which
+  establishes whether event-count burden differs.
+
+## Module P9 — parameter sensitivity
+
+Setting `analysis.burden.sensitivity: true` runs the full 81-combo grid
+over the reproduction-specific choices (`arm_min_frac` x `arm_match_diff`
+x `focal_thr` x `focal_broad_overlap_max`).  The verdict per metric —
+whether the beta sign is consistent in every combination — is the
+robustness statement to quote; inconsistent signs mean the conclusion is
+an artefact of the parameterisation, not a finding.
+
+## Module P10 — burden-controlled permutation on peaks
+
+The permutation randomises which sample-peak pairs are altered while
+holding **both margins** of the binary matrix fixed: row sums (each
+sample's total altered-peak count = global disruption) and column sums
+(each peak's overall frequency). Only peak-specific *preferential
+hitting* remains testable. Interpretation notes:
+
+- Read every peak against its **naive p** (`p_naive`) and the summary
+  lambda pair. A peak that is naive-significant but permutation-robust
+  (`burden_flag`) is what a global burden asymmetry would manufacture.
+- With **no covariates** the default `stat: zprop` (two-proportion z) is
+  used — asymptotically the logistic Wald Z and fully vectorised. With
+  metadata, `stat: wald` fits the covariate-adjusted logistic per
+  permutation (use a smaller B).
+- Margin-fixed Z statistics have a slightly *larger* null variance than
+  the textbook normal (hypergeometric variance correction), so
+  `lambda_perm` can sit a little above 1 without indicating bias.
+- The permutation controls **global burden only**. It is not a batch
+  correction: platform-level differences between the cohorts need module
+  PQ and, ideally, a co-normalised re-run.
+
+## Module PQ — p-value QC
+
+For every p-value set the module reports the genomic inflation factor
+lambda = median(z^2)/0.4549 (z = Phi^-1(1 - p/2)) and a Q-Q plot.
+
+- lambda ~ 1 is healthy; **lambda > 1.1 means systematic bias** — batch
+  effects, stratification or an unadjusted confounder. The affected
+  sets' "significant" units must be re-read (as hypotheses, not
+  findings) until the bias is handled.
+- A Q-Q lift driven by a *few* extreme points can be real signal; a lift
+  of the *whole curve* (most p-values smaller than expected) is bias.
+- P10's `p_naive` and `p_perm` sets are reported separately on purpose:
+  their lambda gap is the burden inflation that the permutation removed.
+- Small sets (n < ~50, e.g. peak layers) give noisy lambda — read them
+  together with the Q-Q shape, not by lambda alone.
+

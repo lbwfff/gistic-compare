@@ -35,3 +35,17 @@ from .pairwise_p3 import *  # noqa: F401,F403
 from .pairwise_p3 import figures_p3  # noqa: F401
 from .pairwise_p4 import *  # noqa: F401,F403
 from .pairwise_p4 import figures_p4, figures_p5  # noqa: F401
+from .pairwise_p6 import *  # noqa: F401,F403
+from .pairwise_p6 import figures_p6  # noqa: F401
+from .pairwise_p7 import *  # noqa: F401,F403
+from .pairwise_p7 import figures_p7  # noqa: F401
+from .pairwise_p8 import *  # noqa: F401,F403
+from .pairwise_p8 import figures_p8  # noqa: F401
+from .pairwise_p9 import *  # noqa: F401,F403
+from .pairwise_p9 import figures_p9  # noqa: F401
+from .pairwise_p10 import *  # noqa: F401,F403
+from .pairwise_p10 import figures_p10  # noqa: F401
+from .pairwise_pd import *  # noqa: F401,F403
+from .pairwise_pd import figures_pd  # noqa: F401
+from .pval_qc import *  # noqa: F401,F403
+from .pval_qc import figures_pq  # noqa: F401
