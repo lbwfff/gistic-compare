@@ -29,7 +29,7 @@ def test_benchmark_all_modules(benchmark_config, tmp_path):
     # no rows beyond the module-skip path
     g_summary = tables / "G_paper_summary.tsv"
     assert not g_summary.exists()
-    assert figures.glob("A_jaccard_interval.png")
+    assert (figures / "A_jaccard_interval.png").exists()
     # run manifest records the skip reason
     import json
     mf = json.loads((tables.parent / "run_manifest.json").read_text())
@@ -68,9 +68,9 @@ def test_pairwise_all_modules(pairwise_config, tmp_path):
     assert not hit.empty
     assert (hit["freq_amp_a"] > hit["freq_amp_b"]).all()
     figures = out / "test_pair" / "figures"
-    assert figures.glob("P1_jaccard.png")
-    assert figures.glob("P4_genome_diff_fisher.png")
-    assert figures.glob("GS_band_genome_amp.png")
+    assert (figures / "P1_jaccard.png").exists()
+    assert (figures / "P4_genome_diff_fisher.png").exists()
+    assert (figures / "GS_band_genome_amp.png").exists()
     # MDE / power table: one row per comparison x direction x baseline
     power = pd.read_csv(tables / "P4_power.tsv", sep="\t")
     assert len(power) == 1 * 2 * 5          # comps x {Amp,Del} x baselines
@@ -83,7 +83,7 @@ def test_pairwise_all_modules(pairwise_config, tmp_path):
     # OncoPrint: long call table + figure
     onco_calls = pd.read_csv(tables / "P1_onco_calls.tsv", sep="\t")
     assert {"peak_key", "sample", "cohort", "call"} <= set(onco_calls)
-    assert figures.glob("P1_oncoprint*.png")
+    assert any(figures.glob("P1_oncoprint*.png"))
     # run manifest is written next to the tables
     import json
     mf = json.loads((tables.parent / "run_manifest.json").read_text())

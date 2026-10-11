@@ -21,11 +21,15 @@ def test_build_onco_data_shape(synth_root, pairwise_config):
     o = onco[0]
     assert o["comparison"] == "a_vs_b"
     m = o["matrix"]
-    # columns: 8 samples of a then 8 of b
-    assert list(m.columns[:8]) == [f"A{i}" for i in range(1, 9)]
-    assert list(m.columns[8:]) == [f"B{i}" for i in range(1, 9)]
+    # columns: the 8 samples of a then the 8 of b (order within a block is
+    # not part of the contract — assert membership, not position)
+    assert set(m.columns[:8]) == {f"A{i}" for i in range(1, 9)}
+    assert set(m.columns[8:]) == {f"B{i}" for i in range(1, 9)}
     assert len(o["blocks"]) == 2
-    assert o["blocks"][0]["n" if "n" in o["blocks"][0] else "columns"]
+    assert o["blocks"][0]["cohort"] == "a"
+    assert len(o["blocks"][0]["columns"]) == 8
+    assert o["blocks"][1]["cohort"] == "b"
+    assert len(o["blocks"][1]["columns"]) == 8
     # values are 0/1/2 or NaN only
     vals = set(np.unique(m.to_numpy(dtype=float)[~np.isnan(m.to_numpy(dtype=float))]))
     assert vals <= {0.0, 1.0, 2.0}

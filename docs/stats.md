@@ -57,9 +57,13 @@ Interpretation rules:
 
 ## Null calibration (P4/P5)
 
-Random within-cohort half-splits quantify the false-positive background of
-the window pipeline. They do **not** simulate batch effects — a clean null
-does not exclude batch/processing differences as the source of the signal.
+Random label permutations of the pooled two-cohort samples at the
+comparison's own group sizes (n_a / n_b), run through the **same** binary
+pipeline as the main analysis (thresholded amp/del counts, two-sided
+Fisher + Mann-Whitney, BH per direction), quantify the false-positive
+background of the window pipeline.  They do **not** simulate batch effects
+— a clean null does not exclude batch/processing differences as the source
+of the signal.
 
 ## Module CF — bounding, not adjusting
 
@@ -205,7 +209,7 @@ sample's total altered-peak count = global disruption) and column sums
 hitting* remains testable. Interpretation notes:
 
 - Read every peak against its **naive p** (`p_naive`) and the summary
-  lambda pair. A peak that is naive-significant but permutation-robust
+  lambda pair. A peak that is naive-significant but **not** permutation-robust
   (`burden_flag`) is what a global burden asymmetry would manufacture.
 - With **no covariates** the default `stat: zprop` (two-proportion z) is
   used — asymptotically the logistic Wald Z and fully vectorised. With

@@ -28,8 +28,11 @@ _NOV_WEIGHTS = [
 def plot_novelty_facet(summary: pd.DataFrame, cfg: dict[str, Any]) -> None:
     """One panel per weight; x=experiment, hue=Amp/Del, y=fraction.
 
-    Whiskers are the 95% Wilson interval of ``n_unique / n_exp`` — i.e. how
-    much of the "unique fraction" is sampling noise in the peak count.
+    Whiskers are drawn **on the count panel only**: the 95% Wilson interval
+    of ``n_unique / n_exp`` matches the bar quantity there and only there.
+    The weighted fractions (frequency / -log10(q) / G-score) are ratios of
+    summed weights with no closed-form binomial CI, so they are drawn as
+    bare bars rather than wearing a CI that belongs to another quantity.
     """
     if summary.empty:
         return
@@ -51,6 +54,7 @@ def plot_novelty_facet(summary: pd.DataFrame, cfg: dict[str, Any]) -> None:
     w = 0.34
     for k, (col, lab) in enumerate(weights):
         ax = flat[k]
+        has_ci = col == "frac_count"
         for pi, pt in enumerate(ptypes):
             xs, ys, lo, hi = [], [], [], []
             for ei, e in enumerate(exp_order):
@@ -58,11 +62,15 @@ def plot_novelty_facet(summary: pd.DataFrame, cfg: dict[str, Any]) -> None:
                 if r.empty:
                     continue
                 r = r.iloc[0]
-                cl, ch = theme.wilson_ci([r["n_unique"]], [r["n_exp"]])
+                if has_ci:
+                    cl, ch = theme.wilson_ci([r["n_unique"]], [r["n_exp"]])
+                    clo, chi = float(cl[0]), float(ch[0])
+                else:
+                    clo, chi = np.nan, np.nan
                 xs.append(ei + (pi - 0.5) * (w + 0.04))
                 ys.append(float(r[col]))
-                lo.append(float(cl[0]))
-                hi.append(float(ch[0]))
+                lo.append(clo)
+                hi.append(chi)
             if not xs:
                 continue
             bars = theme.bar_with_ci(ax, xs, ys, lo, hi, width=w,
@@ -84,14 +92,19 @@ def plot_novelty_facet(summary: pd.DataFrame, cfg: dict[str, Any]) -> None:
     if ptypes:
         flat[0].legend(frameon=False, fontsize=6, loc="upper left", ncol=2)
     # figure-level footnote: inside the last panel it lands on the bars
-    fig.text(0.5, 0.004, "whiskers: 95% Wilson CI of n_unique/n_exp",
+    fig.text(0.5, 0.004,
+             "whiskers (count panel): 95% Wilson CI of n_unique/n_exp; "
+             "weighted fractions have no closed-form CI",
              fontsize=5.5, color="#555555", ha="center", va="bottom")
     fig.tight_layout(rect=(0.0, 0.028, 1.0, 1.0))
     save(fig, cfg, "F_novelty_facet")
 
 
 def plot_novelty_bars(summary: pd.DataFrame, cfg: dict[str, Any]) -> None:
-    """Single grouped bar: x=weight, hue=experiment, facet=ptype."""
+    """Single grouped bar: x=weight, hue=experiment, facet=ptype.
+
+    Whiskers appear on the ``count`` weight only (95% Wilson CI of
+    n_unique/n_exp); the weighted fractions have no closed-form CI."""
     if summary.empty:
         return
     style(cfg)
@@ -120,11 +133,16 @@ def plot_novelty_bars(summary: pd.DataFrame, cfg: dict[str, Any]) -> None:
                 if r.empty:
                     continue
                 r = r.iloc[0]
-                cl, ch = theme.wilson_ci([r["n_unique"]], [r["n_exp"]])
+                # CI only where it matches the bar quantity (count fraction)
+                if col == "frac_count":
+                    cl, ch = theme.wilson_ci([r["n_unique"]], [r["n_exp"]])
+                    clo, chi = float(cl[0]), float(ch[0])
+                else:
+                    clo, chi = np.nan, np.nan
                 xs.append(wi + (ei - (len(exp_order) - 1) / 2) * bw)
                 ys.append(float(r[col]))
-                lo.append(float(cl[0]))
-                hi.append(float(ch[0]))
+                lo.append(clo)
+                hi.append(chi)
             if not xs:
                 continue
             bars = theme.bar_with_ci(

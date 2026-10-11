@@ -113,7 +113,10 @@ def _load_metadata(cfg: dict[str, Any]) -> pd.DataFrame | None:
     covs = list(meta.get("covariates") or [])
     keep = [sid] + [c for c in covs if c in df.columns and c != sid]
     df = df[keep].drop_duplicates(subset=[sid])
-    return df
+    # normalise the id column name: downstream merges join on "sample", and
+    # a differently named id column would otherwise be ingested as if it
+    # were a covariate (one-hot per patient!)
+    return df.rename(columns={sid: "sample"})
 
 
 def Path_exists(p) -> bool:
@@ -212,9 +215,7 @@ def run_module_p3(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     if not alt_rows:
         return skip("no call data")
     alt = pd.concat(alt_rows, ignore_index=True)
-    alt = alt.merge(meta_df, left_on="sample",
-                    right_on=cfg["metadata"].get("sample_id", "sample"),
-                    how="inner")
+    alt = alt.merge(meta_df, on="sample", how="inner")
     if alt.empty:
         return skip("metadata join produced 0 samples")
     join_rate = alt["sample"].nunique() / max(

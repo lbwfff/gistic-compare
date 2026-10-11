@@ -19,6 +19,9 @@ def plot_p9_dists(scores: pd.DataFrame, tests: pd.DataFrame, cfg) -> None:
     pal = _palette(cfg)
     if "comparison" not in tests.columns or tests.empty:
         comps = [(" vs ".join(sorted(set(scores["cohort"]))), scores)]
+    elif "comparison" in scores.columns:
+        comps = [(c, scores[scores["comparison"] == c])
+                 for c in dict.fromkeys(tests["comparison"])]
     else:
         comps = [(c, scores[scores["cohort"].isin(c.split("_vs_"))])
                  for c in dict.fromkeys(tests["comparison"])]
@@ -113,6 +116,8 @@ def plot_p9_decomposition(scores: pd.DataFrame, tests: pd.DataFrame, cfg
                                                  total_w=3.6))
     for cid in (ca, cb):
         d = scores[scores["cohort"] == cid]
+        if "comparison" in scores.columns:
+            d = d[d["comparison"] == comp]
         ax.scatter(d["S_arm_star"] + d["S_chrom_star"], d["S_focal_star"],
                    s=12, alpha=0.7, color=pal.get(cid, "#888888"),
                    edgecolor="none",

@@ -20,6 +20,35 @@ LESIONS_COLS = [
     "Broad or Focal", "Amplitude Threshold",
 ]
 
+
+def _canon(cohort: str) -> list[str]:
+    """Canonical sample ids — positional call vectors are keyed to this."""
+    return [f"{cohort}{i}" for i in range(1, 9)]
+
+
+def _rng(cohort: str) -> np.random.Generator:
+    """Cohort-specific RNG.
+
+    Re-seeding the same seed per cohort (as this used to) handed every
+    cohort byte-identical marker noise — artificial cross-cohort
+    correlation that can mask sign/direction bugs in P4/P5/P7 statistics.
+    """
+    return np.random.default_rng([42, *cohort.encode()])
+
+
+def _calls_for(pk: dict, cohort: str) -> list[int]:
+    """Per-sample call vector in ``_canon(cohort)`` order.
+
+    Design slots "A"/"B" carry the injected ground truth; derived cohorts
+    (e.g. the benchmark control) get a deterministic rotation instead of
+    an exact copy of A's vector, so control-vs-experiment comparisons face
+    an independently structured call pattern.
+    """
+    vec = list(pk["calls"][cohort if cohort in ("A", "B") else "A"])
+    if cohort not in ("A", "B"):
+        vec = vec[3:] + vec[:3]
+    return vec
+
 # (type, descriptor, chrom, start, end, q, per-cohort call vector name)
 def peaks_for(cohort: str) -> list[dict]:
     """A handful of peaks; some shared, some cohort-specific."""
@@ -59,24 +88,32 @@ def peaks_for(cohort: str) -> list[dict]:
                  calls={"A": [0, 0, 0, 0, 0, 0, 0, 0],
                         "B": [1, 0, 0, 0, 0, 0, 0, 0]}),
         ]
+    if cohort != "A":
+        # shared peaks carry slightly different coordinates per cohort —
+        # byte-identical intervals would let positional matching bugs pass
+        for pk in common:
+            pk["start"] += 150_000
+            pk["end"] += 50_000
     return common
 
 
 def write_all_lesions(path: Path, cohort: str, samples: list[str]) -> None:
     rows = []
-    # calls are keyed by "A"/"B" design slots; other cohorts reuse A's vector
-    call_key = cohort if cohort in ("A", "B") else "A"
+    canon = _canon(cohort)
     for pk in peaks_for(cohort):
         coord = (f"{pk['chrom']}:{pk['start']}-{pk['end']}(probes 1:2)")
         summary = ([pk["utype"] + f"({pk['desc']})", pk["desc"], coord, coord,
                     coord, f"{pk['q']:.4g}", f"{pk['q'] / 2:.4g}",
                     "Broad or Focal", "Amplitude Threshold"])
-        calls = pk["calls"][call_key]
-        summary += [str(c) for c in calls]
+        # call vectors are keyed to canonical sample ids and re-emitted in
+        # the file's (shuffled) column order — position carries no meaning
+        call_map = dict(zip(canon, _calls_for(pk, cohort)))
+        summary += [str(call_map[s]) for s in samples]
         # CN values row: continuous per-sample copy change; altered samples
         # carry the direction-specific value so P7's peak layer has signal
         sign = 1.0 if pk["utype"] == "amplification" else -1.0
-        cn_vals = [f"{sign * (0.6 if c > 0 else 0.0):.4g}" for c in calls]
+        cn_vals = [f"{sign * (0.6 if call_map[s] > 0 else 0.0):.4g}"
+                   for s in samples]
         cn = ([pk["utype"] + f"({pk['desc']}) - CN values", pk["desc"], coord,
                coord, coord, "NA", "NA", "NA", "NA"] + cn_vals)
         rows.append(summary)
@@ -133,23 +170,35 @@ def write_scores(path: Path, cohort: str) -> None:
 
 def write_seg(path: Path, cohort: str, samples: list[str]) -> None:
     """chr1 5-10 Mb carries the between-cohort focal signal for P4/P5/P7;
-    chr2q is broadly amplified in every A sample (broad signal for P6)."""
+    chr2q is broadly amplified in every A sample (broad signal for P6).
+
+    Each segment value carries small per-sample noise: byte-identical
+    samples (as this used to emit) make MW/correlation statistics
+    degenerate and hide within-cohort structure.  The signal margins
+    (0.4 vs thresholds at +/-0.1/0.25/0.3) are >= 10 sigma wide.
+    """
+    rng = _rng(cohort)
     with open(path, "w") as fh:
         fh.write("Sample\tChromosome\tStart\tEnd\tNum_Probes\tSegment_Mean\n")
-        for si, s in enumerate(samples):
+        for s in samples:
             for c, size in [(1, 249250621), (2, 243199373), (3, 198022430)]:
                 if c == 1:
                     # background + the differential region
-                    fh.write(f"{s}\tchr1\t0\t5_000_000\t100\t0.0\n".replace("_", ""))
+                    b1 = rng.normal(0.0, 0.02)
+                    fh.write(f"{s}\tchr1\t0\t5000000\t100\t{b1:.4f}\n")
                     mid = 0.4 if cohort == "A" else -0.3
-                    fh.write(f"{s}\tchr1\t5000000\t10000000\t200\t{mid}\n")
-                    fh.write(f"{s}\tchr1\t10000000\t{size}\t800\t0.0\n")
+                    fh.write(f"{s}\tchr1\t5000000\t10000000\t200\t"
+                             f"{mid + rng.normal(0.0, 0.02):.4f}\n")
+                    fh.write(f"{s}\tchr1\t10000000\t{size}\t800\t"
+                             f"{rng.normal(0.0, 0.02):.4f}\n")
                 elif c == 2:
                     # whole chromosome at 0.5 in A (broad 2q amp), 0 in B
                     broad = 0.5 if cohort == "A" else 0.0
-                    fh.write(f"{s}\tchr2\t0\t{size}\t300\t{broad}\n")
+                    fh.write(f"{s}\tchr2\t0\t{size}\t300\t"
+                             f"{broad + rng.normal(0.0, 0.02):.4f}\n")
                 else:
-                    fh.write(f"{s}\tchr{c}\t0\t{size}\t300\t0.0\n")
+                    fh.write(f"{s}\tchr{c}\t0\t{size}\t300\t"
+                             f"{rng.normal(0.0, 0.02):.4f}\n")
 
 
 def write_seg_counts(path: Path, samples: list[str]) -> None:
@@ -172,7 +221,7 @@ def write_marker_mat(path: Path, cohort: str, samples: list[str]) -> None:
     """Write a D.cap1.5.mat (MATLAB v7.3 / HDF5 SegArray) with signal."""
     import h5py
 
-    rng = np.random.default_rng(42)
+    rng = _rng(cohort)   # per-cohort noise: identical noise across cohorts
     # markers every 1 Mb on chr1-3 (small subset of the real thing)
     chrom_sizes = {1: 249250621, 2: 243199373, 3: 198022430}
     pos, chrn = [], []
@@ -215,7 +264,8 @@ def write_marker_mat(path: Path, cohort: str, samples: list[str]) -> None:
         vals = []
         for j in range(len(samples)):
             sv = rng.normal(0.0, 0.05, nseg_per_sample)
-            sv[region_seg] = 0.6 if cohort == "A" else -0.6
+            sv[region_seg] = ((0.6 if cohort == "A" else -0.6)
+                              + rng.normal(0.0, 0.02))
             vals.append(sv)
         o = np.concatenate(vals).astype(np.float64)
         refs.create_dataset("o", data=o.reshape(1, -1))
@@ -229,14 +279,17 @@ def write_broad_values_by_arm(path: Path, cohort: str,
     amp in 5/8 (Fisher-differentiable); cohort B: 3q del in 3/8.
     """
     arms = [f"{n}{s}" for n in (1, 2, 3) for s in ("p", "q")]
+    # spec keyed to canonical sample ids — the injected counts survive any
+    # file-level row ordering
+    canon = _canon(cohort)
     spec: dict[tuple[str, str], int] = {}
     if cohort == "A":
-        for s in samples:
+        for s in canon:
             spec[(s, "2q")] = 1
-        for s in samples[:5]:
+        for s in canon[:5]:
             spec[(s, "1q")] = 1
     else:
-        for s in samples[:3]:
+        for s in canon[:3]:
             spec[(s, "3q")] = 2
     with open(path, "w") as fh:
         fh.write("\t".join(["sample"] + arms) + "\n")
@@ -260,17 +313,23 @@ def write_arm_qv(path: Path, cohort: str) -> None:
 def make_cohort_dir(root: Path, cohort: str, prefix: str) -> Path:
     d = root / cohort
     d.mkdir(parents=True, exist_ok=True)
-    samples = [f"{cohort}{i}" for i in range(1, 9)]
-    write_all_lesions(d / f"{prefix}.all_lesions.conf_90.txt", cohort, samples)
+    canon = _canon(cohort)
+    rng = _rng(cohort)
+    # every file lists the same samples in its own order — joins across
+    # files must be name-based, never positional
+    orders = {k: [str(s) for s in rng.permutation(canon)]
+              for k in ("lesions", "seg", "counts", "mat", "broad")}
+    write_all_lesions(d / f"{prefix}.all_lesions.conf_90.txt", cohort,
+                      orders["lesions"])
     write_genes(d / f"{prefix}.amp_genes.conf_90.txt", cohort, "amp")
     write_genes(d / f"{prefix}.del_genes.conf_90.txt", cohort, "del")
     write_scores(d / f"{prefix}.scores.gistic", cohort)
-    write_seg(d / f"{prefix}.tumors.seg", cohort, samples)
-    write_seg_counts(d / f"{prefix}.sample_seg_counts.txt", samples)
+    write_seg(d / f"{prefix}.tumors.seg", cohort, orders["seg"])
+    write_seg_counts(d / f"{prefix}.sample_seg_counts.txt", orders["counts"])
     write_regions_bed(d / f"{prefix}.regions_track.conf_90.bed", cohort)
-    write_marker_mat(d / f"{prefix}.D.cap1.5.mat", cohort, samples)
+    write_marker_mat(d / f"{prefix}.D.cap1.5.mat", cohort, orders["mat"])
     write_broad_values_by_arm(d / f"{prefix}.broad_values_by_arm.txt",
-                              cohort, samples)
+                              cohort, orders["broad"])
     write_arm_qv(d / f"{prefix}.amp_qv.conf_90.txt", cohort)
     write_arm_qv(d / f"{prefix}.del_qv.conf_90.txt", cohort)
     return d

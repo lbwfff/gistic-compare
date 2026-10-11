@@ -117,6 +117,36 @@ def _window_stats(vals_a: np.ndarray, vals_b: np.ndarray,
     return df
 
 
+def _trust_layer(raw: pd.DataFrame, cen: pd.DataFrame,
+                 fdr: float) -> pd.DataFrame:
+    """Pair raw and centered window stats by window id and classify trust layers.
+
+    The two variants can cover **different** window sets: ``_window_stats``
+    silently drops windows with < 3 finite samples, and a sample without
+    neutral segments (NaN baseline) drops further windows in the centered
+    variant only.  Rows must therefore be joined on ``win`` — pairing the two
+    frames by position would attach e.g. raw window *i* to centered window
+    *i+1* and mislabel every trust layer after the first gap.
+    """
+    r = raw[["win", "chrom", "start", "end", "delta_median",
+             "p_mw", "p_mw_fdr", "p_amp_fdr"]].rename(columns={
+                 "delta_median": "delta_median_raw",
+                 "p_mw": "p_mw_raw", "p_mw_fdr": "p_mw_fdr_raw",
+                 "p_amp_fdr": "p_amp_fdr_raw"})
+    c = cen[["win", "delta_median", "p_mw", "p_mw_fdr",
+             "p_amp_fdr"]].rename(columns={
+                 "delta_median": "delta_median_cen",
+                 "p_mw": "p_mw_cen", "p_mw_fdr": "p_mw_fdr_cen",
+                 "p_amp_fdr": "p_amp_fdr_cen"})
+    layer = r.merge(c, on="win", how="inner")
+    sig_r = layer["p_mw_fdr_raw"] < fdr
+    sig_c = layer["p_mw_fdr_cen"] < fdr
+    layer["layer"] = np.select(
+        [sig_r & sig_c, sig_r & ~sig_c, ~sig_r & sig_c],
+        ["robust", "baseline_only", "centered_only"], "ns")
+    return layer
+
+
 def _lambda_rows(stats_df: pd.DataFrame, variant: str, comp: str
                  ) -> list[dict]:
     rows = []
@@ -160,7 +190,9 @@ def run_module_pd(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     for cmp_ in cfg["comparisons"]:
         ca, cb = cmp_["a"], cmp_["b"]
         if cmp_.get("kind") == "paired":
-            print(f"  [PD] skipped paired comparison {ca}_vs_{cb}")
+            print(f"  [PD] {ca}_vs_{cb}: paired comparison skipped — PD "
+                  "implements unpaired tests only (paired inference is on "
+                  "the roadmap)")
             continue
         comp = f"{ca}_vs_{cb}"
         raw = _window_stats(raw_vals[ca], raw_vals[cb], grid, rcfg)
@@ -170,21 +202,9 @@ def run_module_pd(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
         for variant, st in (("raw", raw), ("centered", cen)):
             lam_rows.extend(_lambda_rows(st, variant, comp))
 
-        # trust layers from the MW statistic (the inflated one)
-        layer = pd.DataFrame(dict(
-            win=raw["win"], chrom=raw["chrom"], start=raw["start"],
-            end=raw["end"],
-            delta_median_raw=raw["delta_median"],
-            delta_median_cen=cen["delta_median"],
-            p_mw_raw=raw["p_mw"], p_mw_fdr_raw=raw["p_mw_fdr"],
-            p_mw_cen=cen["p_mw"], p_mw_fdr_cen=cen["p_mw_fdr"],
-            p_amp_fdr_raw=raw["p_amp_fdr"], p_amp_fdr_cen=cen["p_amp_fdr"],
-        ))
-        sig_r = layer["p_mw_fdr_raw"] < dcfg["fdr"]
-        sig_c = layer["p_mw_fdr_cen"] < dcfg["fdr"]
-        layer["layer"] = np.select(
-            [sig_r & sig_c, sig_r & ~sig_c, ~sig_r & sig_c],
-            ["robust", "baseline_only", "centered_only"], "ns")
+        # trust layers from the MW statistic (the inflated one); raw and
+        # centered rows are paired by window id (see _trust_layer)
+        layer = _trust_layer(raw, cen, dcfg["fdr"])
         layer.insert(0, "comparison", comp)
         layer_frames.append(layer)
 

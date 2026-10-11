@@ -127,7 +127,8 @@ def plot_p4_genome_diff_mw(bands, cfg, prefix="P4"):
 
 
 def plot_p4_null(nullcal, summary, cfg, prefix="P4"):
-    """Observed vs random-split null count of FDR-significant 1 Mb windows.
+    """Observed vs label-permutation null count of FDR-significant 1 Mb
+    windows.
 
     Both quantities belong to a *comparison* (the observed n_sig_windows is
     comparison-level in the summary table), so the x axis is comparisons,
@@ -139,8 +140,13 @@ def plot_p4_null(nullcal, summary, cfg, prefix="P4"):
     rows = []
     for _, r in summary.iterrows():
         ca, cb = theme.comp_sides(cfg, str(r["comparison"]))
-        nc = nullcal[nullcal["cohort"].isin([ca, cb])] if (
-                nullcal is not None and not nullcal.empty) else pd.DataFrame()
+        if nullcal is not None and not nullcal.empty:
+            if "comparison" in nullcal.columns:
+                nc = nullcal[nullcal["comparison"] == str(r["comparison"])]
+            else:  # legacy per-cohort null table
+                nc = nullcal[nullcal["cohort"].isin([ca, cb])]
+        else:
+            nc = pd.DataFrame()
         rows.append(dict(
             comparison=str(r["comparison"]),
             observed=float(r["n_sig_windows"]),
@@ -193,7 +199,7 @@ def plot_p4_null(nullcal, summary, cfg, prefix="P4"):
     ax.legend(handles=[
         Patch(facecolor="#8A8A8A", edgecolor="white", label="observed"),
         Patch(facecolor="#D9D9D9", edgecolor="#999999",
-              label="null (random split, mean, p95)"),
+              label="null (label permutation, mean, p95)"),
     ], frameon=False, fontsize=6.5, loc="upper right")
     theme.panel_label(ax, theme.panel_letter(0), cfg)
     theme.finalize(fig, "tight")

@@ -135,7 +135,9 @@ def _test_groups(cfg: dict[str, Any], data: dict[str, dict],
         ca, cb = cmp_["a"], cmp_["b"]
         comp = f"{ca}_vs_{cb}"
         if cmp_.get("kind") == "paired":
-            print(f"  [GS] skipped paired comparison {comp}")
+            print(f"  [GS] {comp}: paired comparison skipped — GS "
+                  "implements unpaired tests only (paired inference is on "
+                  "the roadmap)")
             continue
         la = cfg.get("cohorts", {}).get(ca, {}).get("label", ca)
         lb = cfg.get("cohorts", {}).get(cb, {}).get("label", cb)

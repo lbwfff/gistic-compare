@@ -18,8 +18,9 @@ Design (config `analysis.regional`):
             merged into differential regions (fewer, interpretable units)
   * exclusivity (paper wording): freq >= excl_freq_min in one cohort AND
             freq <= excl_freq_max in the other, per direction
-  * null calibration: random within-cohort splits (equal size) run through the
-            same binary pipeline -> false-positive background
+  * null calibration: pooled-sample label permutations at the comparison's
+    own group sizes, run through the same binary pipeline (Fisher + MW,
+    BH) -> false-positive background
 
 Outputs: P4_regional_diff.tsv, P4_differential_regions.tsv,
          P4_exclusive_regions.tsv, P4_summary.tsv, P4_null_calibration.tsv
@@ -219,14 +220,6 @@ def _fisher_p(ka: int, na: int, kb: int, nb: int) -> float:
                                     alternative="two-sided")[1])
 
 
-def _ztest_p_vec(ka, na, kb, nb) -> np.ndarray:
-    with np.errstate(invalid="ignore", divide="ignore"):
-        pa, pb = ka / na, kb / nb
-        p = (ka + kb) / (na + nb)
-        se = np.sqrt(p * (1 - p) * (1 / na + 1 / nb))
-        return 2 * stats.norm.sf(np.abs((pa - pb) / se))
-
-
 def _fdr(p: np.ndarray) -> np.ndarray:
     from statsmodels.stats.multitest import multipletests
     out = np.full_like(p, np.nan, dtype=float)
@@ -359,33 +352,67 @@ def _region_tests(vals_a: np.ndarray, vals_b: np.ndarray,
     return reg.sort_values("p_min_region").reset_index(drop=True)
 
 
-def _null_calibration(seg: pd.DataFrame, grid: pd.DataFrame,
-                      rcfg: dict) -> pd.DataFrame:
+def _null_label_perm(vals_a: np.ndarray, vals_b: np.ndarray,
+                     grid: pd.DataFrame, rcfg: dict) -> pd.DataFrame:
+    """False-positive background of the window pipeline under label noise.
+
+    Pooled two-cohort samples are randomly re-assigned into groups of the
+    **observed** sizes (n_a, n_b) and every split runs through the *same*
+    binary pipeline as the main analysis: thresholded amp/del counts,
+    two-sided Fisher + Mann-Whitney, BH per direction — counted as
+    FDR-significant exactly the way ``n_sig_windows`` is.  (The earlier
+    within-cohort half-split z-test null used n/2 groups and a different
+    test, so it calibrated neither the sample size nor the test of the
+    real comparison and understated its false-positive background.)
+    """
     amp, dthr = rcfg["amp_thr"], rcfg["del_thr"]
-    vals, _ = _window_values(seg, grid)
+    fdr_thr = rcfg["fdr"]
+    n_a, n_b = int(vals_a.shape[1]), int(vals_b.shape[1])
+    n = n_a + n_b
+    if n_a < 2 or n_b < 2:
+        return pd.DataFrame()
     rng = np.random.default_rng(rcfg["seed"])
-    n = vals.shape[1]
-    half = n // 2
+    vals = np.hstack([vals_a, vals_b])
     rows = []
     for _ in range(rcfg["null_splits"]):
         perm = rng.permutation(n)
-        A = vals[:, perm[:half]]; B = vals[:, perm[half:2 * half]]
-        ka_amp, na = _counts(A, amp, True); kb_amp, nb = _counts(B, amp, True)
-        ka_del, _ = _counts(A, dthr, False); kb_del, _ = _counts(B, dthr, False)
-        pa = _ztest_p_vec(ka_amp, na, kb_amp, nb)
-        pd_ = _ztest_p_vec(ka_del, na, kb_del, nb)
-        fdr = _fdr(np.concatenate([pa, pd_]))
+        A, B = vals[:, perm[:n_a]], vals[:, perm[n_a:]]
+        ka_amp, na = _counts(A, amp, True)
+        kb_amp, nb = _counts(B, amp, True)
+        ka_del, _ = _counts(A, dthr, False)
+        kb_del, _ = _counts(B, dthr, False)
+        p_amp = np.full(len(grid), np.nan)
+        p_del = np.full(len(grid), np.nan)
+        p_mw = np.full(len(grid), np.nan)
+        for i in range(len(grid)):
+            if na[i] == 0 or nb[i] == 0:
+                continue
+            p_amp[i] = _fisher_p(int(ka_amp[i]), int(na[i]),
+                                 int(kb_amp[i]), int(nb[i]))
+            p_del[i] = _fisher_p(int(ka_del[i]), int(na[i]),
+                                 int(kb_del[i]), int(nb[i]))
+            ma, mb = np.isfinite(A[i]), np.isfinite(B[i])
+            if ma.sum() >= 3 and mb.sum() >= 3:
+                try:
+                    p_mw[i] = float(stats.mannwhitneyu(
+                        A[i][ma], B[i][mb], alternative="two-sided")[1])
+                except ValueError:
+                    pass
+        sig = np.zeros(len(grid), dtype=bool)
+        for p in (p_amp, p_del, p_mw):
+            q = _fdr(p)
+            sig |= np.isfinite(q) & (q < fdr_thr)
+        raw = np.concatenate([p_amp, p_del, p_mw])
         rows.append(dict(
-            n_fdr05=int(np.nansum(fdr < 0.05)),
-            n_raw01=int(np.nansum(np.concatenate([pa, pd_]) < 0.01)),
-            n_raw001=int(np.nansum(np.concatenate([pa, pd_]) < 0.001)),
-        ))
+            n_sig=int(sig.sum()),
+            n_raw01=int(np.nansum(raw < 0.01)),
+            n_raw001=int(np.nansum(raw < 0.001))))
     r = pd.DataFrame(rows)
     return pd.DataFrame([dict(
-        n_samples=n, half=half, n_windows=len(grid),
+        n_a=n_a, n_b=n_b, n_windows=len(grid),
         null_splits=rcfg["null_splits"],
-        sig_windows_mean=float(r["n_fdr05"].mean()),
-        sig_windows_p95=float(np.percentile(r["n_fdr05"], 95)),
+        sig_windows_mean=float(r["n_sig"].mean()),
+        sig_windows_p95=float(np.percentile(r["n_sig"], 95)),
         raw01_mean=float(r["n_raw01"].mean()),
         raw001_mean=float(r["n_raw001"].mean()),
     )])
@@ -599,39 +626,6 @@ def _load_band_genes(cfg: dict[str, Any], rcfg: dict,
     return bands, band_genes
 
 
-def _null_from_vals(vals: np.ndarray, grid: pd.DataFrame,
-                    rcfg: dict) -> pd.DataFrame:
-    amp, dthr = rcfg["amp_thr"], rcfg["del_thr"]
-    rng = np.random.default_rng(rcfg["seed"])
-    n = vals.shape[1]
-    half = n // 2
-    rows = []
-    for _ in range(rcfg["null_splits"]):
-        perm = rng.permutation(n)
-        A = vals[:, perm[:half]]
-        B = vals[:, perm[half:2 * half]]
-        ka_amp, na = _counts(A, amp, True)
-        kb_amp, nb = _counts(B, amp, True)
-        ka_del, _ = _counts(A, dthr, False)
-        kb_del, _ = _counts(B, dthr, False)
-        pa = _ztest_p_vec(ka_amp, na, kb_amp, nb)
-        pdl = _ztest_p_vec(ka_del, na, kb_del, nb)
-        fdr = _fdr(np.concatenate([pa, pdl]))
-        both = np.concatenate([pa, pdl])
-        rows.append(dict(n_fdr05=int(np.nansum(fdr < 0.05)),
-                         n_raw01=int(np.nansum(both < 0.01)),
-                         n_raw001=int(np.nansum(both < 0.001))))
-    r = pd.DataFrame(rows)
-    return pd.DataFrame([dict(
-        n_samples=n, half=half, n_windows=len(grid),
-        null_splits=rcfg["null_splits"],
-        sig_windows_mean=float(r["n_fdr05"].mean()),
-        sig_windows_p95=float(np.percentile(r["n_fdr05"], 95)),
-        raw01_mean=float(r["n_raw01"].mean()),
-        raw001_mean=float(r["n_raw001"].mean()),
-    )])
-
-
 def analyze_windows(cfg: dict[str, Any], vals: dict[str, np.ndarray],
                     bands: pd.DataFrame, band_genes: dict,
                     grid: pd.DataFrame, rcfg: dict,
@@ -639,14 +633,15 @@ def analyze_windows(cfg: dict[str, Any], vals: dict[str, np.ndarray],
     """Shared analysis on a per-cohort (windows × samples) matrix."""
     fdr_thr = rcfg["fdr"]
     diff_frames, region_frames, band_frames, paper_frames = [], [], [], []
-    exc_rows, summary_rows = [], []
+    exc_rows, summary_rows, null_rows = [], [], []
     for cmp_ in cfg["comparisons"]:
         ca, cb = cmp_["a"], cmp_["b"]
         comp = f"{ca}_vs_{cb}"
         kind = cmp_.get("kind", "unpaired")
         if kind == "paired":
-            print(f"  [{tag}] skipped paired comparison {comp} "
-                  f"(needs a paired design)")
+            print(f"  [{tag}] {comp}: paired comparison skipped — {tag} "
+                  "implements unpaired tests only (paired inference is on "
+                  "the roadmap)")
             continue
         df = _differential(vals[ca], vals[cb], grid, rcfg)
         if df.empty:
@@ -728,6 +723,12 @@ def analyze_windows(cfg: dict[str, Any], vals: dict[str, np.ndarray],
             n_windows_diff_gt_mde_del=mde["n_windows_diff_gt_mde_del"],
         ))
 
+        # false-positive background at the comparison's own group sizes
+        nc = _null_label_perm(vals[ca], vals[cb], grid, rcfg)
+        if not nc.empty:
+            nc.insert(0, "comparison", comp)
+            null_rows.append(nc)
+
     regional = (pd.concat(diff_frames, ignore_index=True) if diff_frames
                 else pd.DataFrame())
     regions = (pd.concat(region_frames, ignore_index=True) if region_frames
@@ -770,11 +771,6 @@ def analyze_windows(cfg: dict[str, Any], vals: dict[str, np.ndarray],
                            alpha=rcfg.get("power_alpha", 0.05),
                            power=rcfg.get("power_target", 0.8))
 
-    null_rows = []
-    for cid, v in vals.items():
-        nc = _null_from_vals(v, grid, rcfg)
-        nc.insert(0, "cohort", cid)
-        null_rows.append(nc)
     null = pd.concat(null_rows, ignore_index=True) if null_rows else pd.DataFrame()
 
     return dict(regional=regional, regions=regions, bands=band_df,

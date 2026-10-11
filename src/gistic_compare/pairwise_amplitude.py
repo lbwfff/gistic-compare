@@ -240,7 +240,9 @@ def _layer_stats(cfg: dict[str, Any], data: dict[str, dict], groups: list,
     for cmp_ in cfg["comparisons"]:
         ca, cb = cmp_["a"], cmp_["b"]
         if cmp_.get("kind") == "paired":
-            print(f"  [P7] skipped paired comparison {ca}_vs_{cb}")
+            print(f"  [P7] {ca}_vs_{cb}: paired comparison skipped — P7 "
+                  "implements unpaired tests only (paired inference is on "
+                  "the roadmap)")
             continue
         comp = f"{ca}_vs_{cb}"
         mat_a = data[ca]["_p7_matrix"]
@@ -386,7 +388,9 @@ def run_module_p7(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
         for cmp_ in cfg["comparisons"]:
             ca, cb = cmp_["a"], cmp_["b"]
             if cmp_.get("kind") == "paired":
-                print(f"  [P7] skipped paired comparison {ca}_vs_{cb}")
+                print(f"  [P7] {ca}_vs_{cb}: paired comparison skipped — P7 "
+                      "implements unpaired tests only (paired inference is "
+                      "on the roadmap)")
                 continue
             comp = f"{ca}_vs_{cb}"
             for rec in _peak_values(cfg, data, ca, cb, keys, acfg):

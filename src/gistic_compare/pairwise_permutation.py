@@ -29,8 +29,8 @@ BH across peaks.
 
 Every peak also gets its **naive** p (the same statistic without margin
 control) so the burden-induced inflation is quantified: peaks that are
-naive-significant but permutation-robust are exactly the hits a global
-burden difference would have manufactured (``burden_flag``).
+naive-significant but **not** permutation-robust (``burden_flag``) are
+exactly the hits a global burden difference would have manufactured.
 
 Peak QC (R05 §5.4): invariable peaks, peaks fully inside the centromere or
 the terminal 1 Mb of a chromosome (probe-poor), and samples with more than
@@ -117,8 +117,11 @@ def _binary_matrix(cfg: dict[str, Any], data: dict[str, dict], ca: str,
     sidx = {s: i for i, s in enumerate(samples)}
     X = np.zeros((len(samples), len(cols)), dtype=np.int8)
     for j, (col, thr) in enumerate(cols):
-        idx = [sidx[s] for s in col.index if s in sidx]
-        vv = col.to_numpy(float)[:len(idx)]
+        # values must be selected by the *filtered* sample labels: dropped
+        # shared ids used to shift every later value onto the wrong sample
+        keep = [s for s in col.index if s in sidx]
+        idx = [sidx[s] for s in keep]
+        vv = col.loc[keep].to_numpy(float)
         if thr > 0:
             X[idx, j] = vv >= thr
         else:
@@ -190,14 +193,24 @@ def _is_centromere_telomere(peak: pd.Series, arms: pd.DataFrame) -> bool:
 # ---------------------------------------------------------------------------
 
 def _perturb(X: np.ndarray, rng: np.random.Generator, n_attempt: int,
-             batch: int = 2_000) -> int:
+             batch: int | None = None) -> int:
     """Attempt margin-preserving 2x2 swaps on binary X (in place).
 
     Both legal swap patterns toggle the same four cells, so a swap is
     applied by toggling them; batches whose four-cell sets collide are
     dropped cell-wise, which keeps row and column sums **exactly** fixed.
-    Returns the number of swaps applied."""
+    Returns the number of swaps applied.
+
+    ``batch`` defaults to a size *relative to the matrix*: within one huge
+    batch almost every valid swap shares a cell with another valid swap and
+    the collision filter drops both sides, so the chain barely moves (on a
+    60x8 matrix a 2000-proposal batch applied 2 swaps out of 4800 attempts,
+    vs ~10% of attempts at batch 25) — the permutation p-values from a
+    frozen chain are garbage (they collapse to 1/(B+1) or 1).
+    """
     n, m = X.shape
+    if batch is None:
+        batch = int(np.clip(n * m // 16, 32, 2_000))
     done = 0
     remaining = int(n_attempt)
     while remaining > 0:
@@ -282,6 +295,57 @@ def _fdr(p: np.ndarray) -> np.ndarray:
     return out
 
 
+def _covariate_design(X: np.ndarray, samples: list[str], is_b: np.ndarray,
+                      meta_df: pd.DataFrame
+                      ) -> tuple[np.ndarray, list[str], np.ndarray,
+                                 np.ndarray | None, str, int]:
+    """Subset X to metadata-complete samples and build the covariate design.
+
+    The matrix is subset **by sample label** — never by position: samples
+    without metadata are dropped together with their rows, and the returned
+    ``X`` / ``samples`` / ``is_b`` stay aligned.  (Indexing X by the merged
+    frame's positions over the *full* sample list, as this used to do,
+    raises KeyError for samples without metadata and is a no-op otherwise.)
+    Returns ``(X, samples, is_b, cov, cov_note, n_dropped)`` with
+    ``cov = None`` when fewer than 10 samples carry metadata.
+    """
+    cov_names = [c for c in meta_df.columns if c != "sample"]
+    df = pd.DataFrame(dict(sample=samples, is_b=is_b.astype(float)))
+    m = df.merge(meta_df, on="sample", how="inner")
+    if len(m) < 10:
+        return (X, samples, is_b, None,
+                "none (metadata matched <10 samples)", 0)
+    pos = {s: i for i, s in enumerate(samples)}
+    X = X[[pos[s] for s in m["sample"]]]
+    dropped = len(samples) - len(m)
+    dm = pd.get_dummies(m[cov_names].astype("string"),
+                        drop_first=True, dtype=float).fillna(0.0)
+    return (X, list(m["sample"]), m["is_b"].to_numpy(float),
+            dm.to_numpy(float), "+".join(cov_names), dropped)
+
+
+def _perm_z_sample(Xw: np.ndarray, is_b: np.ndarray, B: int,
+                  rng: np.random.Generator, use_wald: bool = False,
+                  cov: np.ndarray | None = None
+                  ) -> tuple[np.ndarray, int]:
+    """Burn in, then draw Z for B margin-preserving permutations (in place).
+
+    Returns ``(Z (B x n_peaks), n_swaps_burnin)``.  The Z matrix is
+    **float64 on purpose**: with float32 storage, ties at the observed
+    state round to a slightly smaller |Z| and the ``>=`` comparison in
+    ``p_perm`` counts them as non-exceedances — on small/medium matrices
+    (where the chain revisits the observed state often) this collapsed
+    ``p_perm`` to the 1/(B+1) floor for perfectly null peaks.
+    """
+    n_att = 4 * Xw.shape[0] * Xw.shape[1]
+    n_swaps = _perturb(Xw, rng, n_attempt=10 * n_att)     # burn-in
+    Z = np.empty((B, Xw.shape[1]), dtype=float)
+    for b in range(B):
+        _perturb(Xw, rng, n_attempt=n_att)
+        Z[b] = _z_wald(Xw, is_b, cov) if use_wald else _zprop(Xw, is_b)
+    return Z, n_swaps
+
+
 # ---------------------------------------------------------------------------
 # module entry
 # ---------------------------------------------------------------------------
@@ -315,7 +379,9 @@ def run_module_p10(cfg: dict[str, Any],
     for cmp_ in cfg["comparisons"]:
         ca, cb = cmp_["a"], cmp_["b"]
         if cmp_.get("kind") == "paired":
-            print(f"  [P10] skipped paired comparison {ca}_vs_{cb}")
+            print(f"  [P10] {ca}_vs_{cb}: paired comparison skipped — P10 "
+                  "implements unpaired tests only (paired inference is on "
+                  "the roadmap)")
             continue
         comp = f"{ca}_vs_{cb}"
         built = _binary_matrix(cfg, data, ca, cb, keys, pcfg["cn_thr"])
@@ -337,17 +403,11 @@ def run_module_p10(cfg: dict[str, Any],
         cov = None
         cov_note = "none"
         if meta_df is not None and len(meta_df.columns) > 1:
-            cov_names = [c for c in meta_df.columns if c != "sample"]
-            df = pd.DataFrame(dict(sample=samples, is_b=is_b.astype(float)))
-            m = df.merge(meta_df, on="sample", how="inner")
-            if len(m) >= 10:
-                dm = pd.get_dummies(m[cov_names].astype("string"),
-                                    drop_first=True, dtype=float).fillna(0.0)
-                order = {s: i for i, s in enumerate(m["sample"])}
-                X = X[[order[s] for s in samples]]
-                is_b = m["is_b"].to_numpy(float)
-                cov = dm.to_numpy(float)
-                cov_note = "+".join(cov_names)
+            X, samples, is_b, cov, cov_note, dropped = _covariate_design(
+                X, samples, is_b, meta_df)
+            if dropped:
+                print(f"  [P10] {comp}: {dropped} sample(s) without "
+                      "metadata dropped from the adjusted model")
 
         use_wald = pcfg["stat"] == "wald" or cov is not None
         if use_wald:
@@ -357,22 +417,14 @@ def run_module_p10(cfg: dict[str, Any],
         with np.errstate(invalid="ignore"):
             p_naive = 2 * stats.norm.sf(np.abs(Z_obs))
 
-        # margin-preserving permutations: burn-in, then a Markov chain
+        # margin-preserving permutations: burn-in + Markov chain
         rng = np.random.default_rng(pcfg["seed"])
         Xw = X.copy()
-        n_att = 4 * X.shape[0] * X.shape[1]
-        n_swaps = _perturb(Xw, rng, n_attempt=10 * n_att)
-        B = pcfg["n_perm"]
-        Z_perm = np.empty((B, X.shape[1]), dtype=np.float32)
-        Z_perm[:] = np.nan
-        for b in range(B):
-            _perturb(Xw, rng, n_attempt=n_att)
-            if use_wald:
-                Z_perm[b] = _z_wald(Xw, is_b, cov)
-            else:
-                Z_perm[b] = _zprop(Xw, is_b)
+        Z_perm, n_swaps = _perm_z_sample(Xw, is_b, pcfg["n_perm"], rng,
+                                         use_wald, cov)
         Z_perm_store[comp] = Z_perm
 
+        B = pcfg["n_perm"]
         with np.errstate(invalid="ignore"):
             exceed = (np.abs(Z_perm) >= np.abs(Z_obs)[None, :]).sum(axis=0)
             p_perm = (exceed + 1) / (B + 1)

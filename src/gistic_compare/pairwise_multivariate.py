@@ -262,6 +262,34 @@ def _cv_auc(X: np.ndarray, y: np.ndarray, groups: np.ndarray | None,
 # module entry
 # ---------------------------------------------------------------------------
 
+def _complete_pairs(sample_list: list[str]
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
+    """Rows belonging to complete cross-cohort pairs (paired designs).
+
+    ``assign_comparison_kinds`` marks a comparison paired at >= ``paired_frac``
+    sample overlap, so a "paired" sample list can contain singletons — and
+    the restricted within-pair permutations / GroupKFold need exactly one
+    sample per cohort per pair.  Samples without a complete pair are
+    dropped (with their rows) instead of crashing the pair indexing.
+
+    Returns ``(keep_mask over sample_list, pair_ids per kept row,
+    (n_pairs x 2) kept-row index array, dropped sample names)``.
+    """
+    from collections import Counter
+    cnt = Counter(sample_list)
+    complete = {s for s, c in cnt.items() if c >= 2}
+    keep = np.array([s in complete for s in sample_list], dtype=bool)
+    kept = [s for s, k in zip(sample_list, keep) if k]
+    ids = sorted(complete)
+    pos = {s: i for i, s in enumerate(ids)}
+    pair_ids = np.array([pos[s] for s in kept], dtype=int)
+    pairs_idx = np.array(
+        [[int(np.flatnonzero(pair_ids == i)[0]),
+          int(np.flatnonzero(pair_ids == i)[1])]
+         for i in range(len(ids))], dtype=int).reshape(-1, 2)
+    dropped = sorted(set(sample_list) - complete)
+    return keep, pair_ids, pairs_idx, dropped
+
 def run_module_p8(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     rcfg = _regional_cfg(cfg)
     mcfg = _mv_cfg(cfg, rcfg)
@@ -330,6 +358,18 @@ def run_module_p8(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
         sample_list = [s for s, k in zip(sample_list, keep_samples) if k]
         cohorts = [c for c, k in zip(cohorts, keep_samples) if k]
         y = np.array([1 if c == cb else 0 for c in cohorts])
+        pair_ids: np.ndarray | None = None
+        pairs_idx: np.ndarray | None = None
+        if kind == "paired":
+            keep, pair_ids, pairs_idx, dropped = _complete_pairs(sample_list)
+            if dropped:
+                print(f"  [P8] {comp}: {len(dropped)} sample(s) without a "
+                      "complete cross-cohort pair dropped from the paired "
+                      "analysis")
+            X_all = X_all[keep]
+            y = y[keep]
+            sample_list = [s for s, k in zip(sample_list, keep) if k]
+            cohorts = [c for c, k in zip(cohorts, keep) if k]
         X, kept_feat = _clean_features(X_all, mcfg["max_nan_frac"])
         feat_names = [f for f, k in zip(feat_names, kept_feat) if k]
         na, nb = int((y == 0).sum()), int((y == 1).sum())
@@ -341,14 +381,6 @@ def run_module_p8(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
 
         # ---- PERMANOVA ----
         rng = np.random.default_rng(mcfg["seed"])
-        pair_ids: np.ndarray | None = None
-        pairs_idx: np.ndarray | None = None
-        if kind == "paired":
-            ids = sorted(set(sample_list))
-            pair_ids = np.array([ids.index(s) for s in sample_list])
-            pairs_idx = np.array([[np.flatnonzero(pair_ids == i)[0],
-                                   np.flatnonzero(pair_ids == i)[1]]
-                                  for i in range(len(ids))])
         D2 = squareform(pdist(X, metric="euclidean")) ** 2
         f_obs, r2, p_perm = _permanova(D2, y, mcfg["n_perm"], rng, pairs_idx)
 

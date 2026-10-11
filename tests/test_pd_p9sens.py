@@ -94,5 +94,7 @@ def test_p9_sensitivity(pairwise_config, tmp_path):
     # synth: A carries the chr2 chromosome-level event -> A has higher
     # burden for every parameterisation
     st = verdict[verdict["metric"] == "S_total"].iloc[0]
-    assert st["sign_consistent"] is True or bool(st["sign_consistent"])
+    # parse the TSV round-tripped value strictly: NaN/"False"/"False-y"
+    # strings must not sneak through a truthiness check
+    assert str(st["sign_consistent"]).strip().lower() in ("true", "1")
     assert st["n_combos"] == 81

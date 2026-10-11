@@ -485,47 +485,57 @@ def _cohort_scores(cfg: dict[str, Any], data: dict[str, dict],
 def _rank_and_test(cfg: dict[str, Any], scores: pd.DataFrame,
                    meta_df: pd.DataFrame | None, verbose: bool = True
                    ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Pooled rank normalization + per-comparison cohort OLS / MW."""
-    for cmp_ in cfg["comparisons"]:
-        ca, cb = cmp_["a"], cmp_["b"]
-        if cmp_.get("kind") == "paired":
-            continue
-        pool = scores["cohort"].isin([ca, cb])
-        for lvl in ("S_focal", "S_arm", "S_chrom"):
-            star = f"{lvl}_star"
-            scores.loc[pool, star] = (
-                scores.loc[pool, lvl].rank(method="average")
-                / max(int(pool.sum()), 1))
-    scores["S_total"] = scores[["S_focal_star", "S_arm_star",
-                                "S_chrom_star"]].sum(axis=1, min_count=3)
+    """Per-comparison pooled rank normalization + cohort OLS / MW.
 
+    Percentile ranks are computed **within each comparison's own pooled
+    sample set** and returned as a per-comparison long table (one row per
+    comparison x sample).  Writing ranks back into shared columns would
+    overwrite them comparison by comparison: with overlapping comparisons
+    (A_vs_B, A_vs_C) cohort A's percentile would come from the A+B pool
+    while cohort B's came from the same pool — or worse, A's would be
+    re-ranked within A+C while B's stayed ranked within A+B, and the two
+    groups would be compared on different scales.
+    """
     cov_names: list[str] = []
     if meta_df is not None and len(meta_df.columns) > 1:
         cov_names = [c for c in meta_df.columns if c != "sample"]
 
+    pool_frames: list[pd.DataFrame] = []
     test_rows = []
     for cmp_ in cfg["comparisons"]:
         ca, cb = cmp_["a"], cmp_["b"]
         if cmp_.get("kind") == "paired":
             if verbose:
-                print(f"  [P9] skipped paired comparison {ca}_vs_{cb}")
+                print(f"  [P9] {ca}_vs_{cb}: paired comparison skipped — P9 "
+                      "implements unpaired tests only (paired inference is "
+                      "on the roadmap)")
             continue
         comp = f"{ca}_vs_{cb}"
         pool = scores[scores["cohort"].isin([ca, cb])].copy()
-        pool["is_b"] = (pool["cohort"] == cb).astype(float)
+        n_pool = len(pool)
+        for lvl in ("S_focal", "S_arm", "S_chrom"):
+            pool[f"{lvl}_star"] = (pool[lvl].rank(method="average")
+                                   / max(n_pool, 1))
+        pool["S_total"] = pool[["S_focal_star", "S_arm_star",
+                                "S_chrom_star"]].sum(axis=1, min_count=3)
+        pool.insert(0, "comparison", comp)
+        pool_frames.append(pool)
+
+        model = pool.copy()
+        model["is_b"] = (model["cohort"] == cb).astype(float)
         cov = None
         cov_note = "none"
         if meta_df is not None and cov_names:
-            m = pool.merge(meta_df, on="sample", how="inner")
+            m = model.merge(meta_df, on="sample", how="inner")
             if len(m) >= 10 and all(c in m.columns for c in cov_names):
                 dm = pd.get_dummies(m[cov_names].astype("string"),
                                     drop_first=True, dtype=float)
                 dm = dm.fillna(0.0)
                 cov = dm.to_numpy(float)
-                pool = m
+                model = m
                 cov_note = "+".join(cov_names)
         for metric, label in METRICS:
-            d = pool.dropna(subset=[metric])
+            d = model.dropna(subset=[metric])
             ya = d.loc[d["cohort"] == ca, metric].to_numpy(float)
             yb = d.loc[d["cohort"] == cb, metric].to_numpy(float)
             if len(ya) < 3 or len(yb) < 3:
@@ -548,7 +558,9 @@ def _rank_and_test(cfg: dict[str, Any], scores: pd.DataFrame,
                 median_a=round(float(np.median(ya)), 4),
                 median_b=round(float(np.median(yb)), 4),
                 cohort_higher=higher))
-    return scores, pd.DataFrame(test_rows)
+    pooled = (pd.concat(pool_frames, ignore_index=True) if pool_frames
+              else pd.DataFrame())
+    return pooled, pd.DataFrame(test_rows)
 
 
 # reproduction-specific parameter grid (R05 §13 #4-#8); 1.0 for the broad
@@ -647,7 +659,10 @@ def run_module_p9(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     cross_rows = []
     for cmp_ in cfg["comparisons"]:
         ca, cb = cmp_["a"], cmp_["b"]
-        pool = scores[scores["cohort"].isin([ca, cb])]
+        comp = f"{ca}_vs_{cb}"
+        pool = (scores[scores["comparison"] == comp]
+                if "comparison" in scores.columns
+                else scores[scores["cohort"].isin([ca, cb])])
         for x, y in (("wGII", "S_total"), ("wGII", "S_focal_star"),
                      ("fga", "S_total")):
             sub = pool[[x, y]].dropna()

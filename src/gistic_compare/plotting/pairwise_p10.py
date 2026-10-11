@@ -11,7 +11,8 @@ from ._core import *  # noqa: F401,F403
 
 def plot_p10_volcano(peaks: pd.DataFrame, cfg, prefix: str = "P10") -> None:
     """Delta-frequency vs -log10(permutation p); burden-inflated peaks get
-    an orange ring (naive-significant, permutation-robust)."""
+    an orange ring (naive-significant but **not** permutation-robust — the
+    signature a global burden difference would manufacture)."""
     if peaks is None or peaks.empty:
         return
     style(cfg)
@@ -48,7 +49,8 @@ def plot_p10_volcano(peaks: pd.DataFrame, cfg, prefix: str = "P10") -> None:
     fig.suptitle(f"{peaks['comparison'].iloc[0]}: peaks, burden-controlled",
                  fontsize=8)
     if "burden_flag" in peaks.columns and peaks["burden_flag"].any():
-        theme.annot_n(ax, "\u25cb = naive p<0.05, permutation-robust",
+        theme.annot_n(ax, "\u25cb = naive p<0.05 but not permutation-robust "
+                      "(burden-inflated)",
                       loc="upper left", fontsize=5.0)
     theme.finalize(fig, "tight")
     save(fig, cfg, f"{prefix}_volcano")
@@ -56,8 +58,9 @@ def plot_p10_volcano(peaks: pd.DataFrame, cfg, prefix: str = "P10") -> None:
 
 def plot_p10_naive_vs_perm(peaks: pd.DataFrame, cfg,
                            prefix: str = "P10") -> None:
-    """Naive vs permutation p per peak: points above the diagonal were
-    inflated by the global burden difference."""
+    """Naive vs permutation p per peak: points below the diagonal (x > y,
+    i.e. smaller naive p) were inflated by the global burden difference;
+    points above it are conservative under margin control."""
     if peaks is None or peaks.empty:
         return
     d = peaks[np.isfinite(peaks["p_naive"]) & np.isfinite(peaks["p_perm"])]

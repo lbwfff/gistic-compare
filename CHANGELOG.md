@@ -92,6 +92,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by direction/alteredness, and carries a broad chr2q signal; test suite
   grows to 65 tests.
 
+### Fixed
+- **Module P10 — two permutation-validity defects** (found by new
+  calibration tests against exact enumeration of the margin class):
+  1. `_perturb`'s batch collision filter dropped both sides of any
+     colliding swap pair; with a batch far larger than the matrix nearly
+     every valid swap was discarded, the Markov chain barely moved (2
+     applied swaps per 4800 attempts on a 60x8 matrix) and `p_perm`
+     collapsed to 1/(B+1) or 1.  Batch size is now scaled to the matrix
+     (~10% of attempts apply).
+  2. `Z_perm` was stored as float32: ties at the observed state rounded
+     to a slightly smaller |Z| and the `>=` comparison counted them as
+     non-exceedances, pushing `p_perm` to the floor for null peaks.
+     Stored as float64 now.
+- **Silent data-misalignment fixes**: module F G-scores are attached to
+  peaks by `peak_id` (Del peaks used to receive Amp peaks' G-scores);
+  module PD pairs raw/centered window statistics by window id (trust
+  layers were mislabelled whenever the two variants skipped different
+  windows); module P10's binary matrix selects values by sample label
+  (shared-sample drops used to shift values onto the wrong samples) and
+  subsets to metadata-complete samples correctly (KeyError on partial
+  metadata).
+- **Module P9**: per-comparison rank normalization is computed within each
+  comparison's own pooled sample set and returned in a per-comparison long
+  table (`P9_burden_scores.tsv` gains a `comparison` column); overlapping
+  comparisons used to overwrite each other's percentiles.
+- **Module PQ**: exact-zero (underflowed) p-values are kept for lambda and
+  the reported `n` (they were dropped, biasing lambda downward); corrupt
+  p > 1 can no longer enter the Q-Q.
+- **P4/P5 null calibration** now uses pooled-sample label permutations at
+  the comparison's own group sizes with the same binary pipeline as the
+  main analysis (Fisher + MW, BH per direction); the earlier within-cohort
+  half-split z-test null calibrated neither the sample size nor the test.
+- P10 volcano ring legend no longer inverts the meaning of `burden_flag`;
+  module F whiskers are drawn only on the count panel (they were Wilson
+  CIs of a different quantity on the weighted panels).
+- Paired comparisons: P8 no longer crashes on partially overlapping
+  sample sets (incomplete pairs are dropped with a notice), and skip
+  messages state explicitly that only unpaired tests are implemented.
+
 ## [0.1.0] - 2026-10-07
 
 First open-source release. Reorganized from the internal

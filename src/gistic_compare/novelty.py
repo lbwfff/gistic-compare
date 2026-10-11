@@ -27,7 +27,10 @@ WEIGHTS = ("count", "freq", "neglogq", "gscore")
 def _aggregate_gscore(scores: pd.DataFrame, peaks: pd.DataFrame) -> pd.Series:
     """Length-weighted mean G-score of scores.gistic intervals per peak.
 
-    Returns Series indexed like peaks (peak_id -> gscore).
+    Returns Series **indexed by peak_id** (peak_id -> gscore).  Downstream
+    frames (q-filtered, one-to-one-match remainders) carry different row
+    orders than the full peaks table, so scores must be attached by id —
+    never by position.
     """
     rows = []
     for _, pk in peaks.iterrows():
@@ -51,7 +54,16 @@ def _aggregate_gscore(scores: pd.DataFrame, peaks: pd.DataFrame) -> pd.Series:
             rows.append(float(np.nanmean(g)) if np.isfinite(g).any() else np.nan)
             continue
         rows.append(float(np.average(g[good], weights=ov[good])))
-    return pd.Series(rows, index=peaks.index)
+    return pd.Series(rows, index=peaks["peak_id"].to_numpy())
+
+
+def _attach_gscore(peaks: pd.DataFrame, gscore: pd.Series) -> np.ndarray:
+    """Attach per-peak G-scores to a peaks frame **by peak_id**.
+
+    The frame may be a q-filtered subset or a match remainder with a reset
+    RangeIndex; positional lookup would hand it another peak's G-score.
+    """
+    return gscore.reindex(peaks["peak_id"]).to_numpy()
 
 
 def _frac(num: float, den: float) -> float:
@@ -100,11 +112,11 @@ def run_module_f(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
 
                 # attach per-peak weights for unique peaks
                 uniq = res.only_a.copy()
-                uniq["gscore"] = gscores[exp].reindex(uniq.index).to_numpy()
+                uniq["gscore"] = _attach_gscore(uniq, gscores[exp])
                 uniq["neglogq"] = -np.log10(np.clip(uniq["q"].to_numpy(float),
                                                     1e-300, None))
                 allp = fe.copy()
-                allp["gscore"] = gscores[exp].reindex(allp.index).to_numpy()
+                allp["gscore"] = _attach_gscore(allp, gscores[exp])
                 allp["neglogq"] = -np.log10(np.clip(allp["q"].to_numpy(float),
                                                     1e-300, None))
                 allp["_unique"] = allp["peak_id"].isin(uniq["peak_id"])

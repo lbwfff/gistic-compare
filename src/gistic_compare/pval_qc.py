@@ -55,10 +55,20 @@ _SPECS: list[tuple[str, list[str]]] = [
 ]
 
 
+def _clean_p(p: np.ndarray) -> np.ndarray:
+    """Finite p-values in [0, 1] — the set every PQ statistic uses.
+
+    Exact zeros are **kept**: they are underflowed p-values (the most
+    significant tests), not missing data, and dropping them biased lambda
+    downward while the reported ``n`` still counted them.
+    """
+    p = np.asarray(p, dtype=float)
+    return p[np.isfinite(p) & (p >= 0) & (p <= 1)]
+
+
 def _lambda(p: np.ndarray) -> float:
     """Genomic inflation factor from a p-value set (genomic control)."""
-    p = np.asarray(p, dtype=float)
-    p = p[np.isfinite(p) & (p > 0) & (p <= 1)]
+    p = _clean_p(p)
     if len(p) < 10:
         return np.nan
     z = stats.norm.isf(np.clip(p, 1e-300, 1.0) / 2.0)
@@ -66,9 +76,15 @@ def _lambda(p: np.ndarray) -> float:
 
 
 def _qq_arrays(p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """(expected, observed) -log10 quantiles against the uniform null."""
-    p = np.sort(np.asarray(p, dtype=float))
-    p = p[np.isfinite(p) & (p > 0)]
+    """(expected, observed) -log10 quantiles against the uniform null.
+
+    Uses the same cleaned set as ``_lambda`` (so p > 1 corrupt values can
+    never enter) minus the exact zeros, which have no finite position on a
+    log scale — the Q-Q is a shape diagnostic; lambda and the reported n
+    use the full set including zeros.
+    """
+    p = _clean_p(p)
+    p = np.sort(p[p > 0])
     n = len(p)
     if n == 0:
         return np.array([]), np.array([])
@@ -108,17 +124,17 @@ def run_module_pq(cfg: dict[str, Any],
                      else ["all"])
             for comp in comps:
                 sub = df[df["comparison"] == comp] if has_comp else df
-                p = sub[col].to_numpy(float)
-                p = p[np.isfinite(p)]
+                p = _clean_p(sub[col].to_numpy(float))
                 if len(p) == 0:
                     continue
+                lam = _lambda(p)          # same cleaned set as n/median
                 rows.append(dict(
                     set_id=set_id, table=stem, column=col,
                     comparison=comp, n=len(p),
                     n_p_lt_005=int((p < 0.05).sum()),
                     median_p=round(float(np.median(p)), 5),
-                    lambda_infl=(round(_lambda(p), 3)
-                                 if np.isfinite(_lambda(p)) else np.nan),
+                    lambda_infl=(round(lam, 3) if np.isfinite(lam)
+                                 else np.nan),
                 ))
 
     inflation = pd.DataFrame(rows)
