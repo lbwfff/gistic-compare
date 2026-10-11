@@ -6,7 +6,8 @@ level logR/BAF (SNP6 Birdseed chain) and emits the harmonized tables
 
   absolute_cn_<cid>.tsv    sample, purity, ploidy_abs, wgd_status,
                            wgd_frac, loh_frac, cnloh_frac, ...,
-                           flag_low_purity, wgd_flag_b, wgd_disagreement
+                           flag_low_purity, wgd_flag_b, wgd_disagreement,
+                           germline_mode, het_source
   absolute_seg_<cid>.tsv   sample, chrom, start, end, cn_total, cn_major,
                            cn_minor
 
@@ -40,7 +41,12 @@ rerun of the headline WGD test; the delta is recorded.
 Pipeline mode: if tables are missing but ``analysis.absolute_cn``
 ``raw_dir/manifest`` exists and Rscript + the ASCAT package are
 available, the R wrapper runs first (subprocess, logged to
-``ABS_r_pipeline.log``); its output feeds the same table mode.  Without
+``ABS_r_pipeline.log``); its output feeds the same table mode.  Germline
+modes (recorded in the output columns ``germline_mode``/``het_source``):
+matched (measured germline BAF), or tumour-only via the samples' own
+Birdseed genotype calls (``het_calls`` manifest column) or ASCAT's
+built-in inference — tumour-only makes ``loh_frac``/``cnloh_frac``
+lower-bound estimates (somatic-LOH loci drop out of the het set).  Without
 R/ASCAT a missing table produces ``ABS_skipped.txt``.
 
 Outputs: ABS_wgd.tsv, ABS_purity_ploidy.tsv, ABS_cn_scores.tsv,
@@ -223,8 +229,9 @@ def _run_r_pipeline(cfg: dict[str, Any], acfg: dict,
     if not manifest.exists():
         return False, (f"manifest not found: {manifest} — pipeline mode "
                        "needs analysis.absolute_cn.raw_dir/manifest "
-                       "(columns: sample, cohort, logr, baf) or harmonized "
-                       "tables per cohort")
+                       "(columns: sample, cohort, logr, baf [, "
+                       "germline_logr, germline_baf | het_calls]) or "
+                       "harmonized tables per cohort")
     tdir = Path(cfg["output"]["_tables"])
     log: list[str] = []
     for cid in missing:
@@ -247,17 +254,17 @@ def _run_r_pipeline(cfg: dict[str, Any], acfg: dict,
             log.append("## TIMEOUT after 3600s")
             (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
                                                      encoding="utf-8")
-            return False, f"FACETS pipeline timed out for {cid}"
+            return False, f"ASCAT pipeline timed out for {cid}"
         log.append((r.stdout or "") + (r.stderr or ""))
         if r.returncode != 0:
             (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
                                                      encoding="utf-8")
-            return False, (f"FACETS pipeline failed for {cid} (rc="
+            return False, (f"ASCAT pipeline failed for {cid} (rc="
                            f"{r.returncode}) — see "
                            f"{tdir / 'ABS_r_pipeline.log'}")
     (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
                                              encoding="utf-8")
-    return True, f"ran FACETS on {len(missing)} cohort(s) ({manifest})"
+    return True, f"ran ASCAT on {len(missing)} cohort(s) ({manifest})"
 
 
 # ---------------------------------------------------------------------------
@@ -405,12 +412,11 @@ def _cn_scores(cfg: dict[str, Any], seg: dict[str, pd.DataFrame],
                 sample=s, n_focal=len(ev),
                 s_focal=float(np.abs([e["C"] for e in ev]).sum())
                 if ev else 0.0))
-        focal_df = pd.DataFrame(focal_rows)
+        focal_map = {r["sample"]: r["s_focal"] for r in focal_rows}
+        nfocal_map = {r["sample"]: r["n_focal"] for r in focal_rows}
         sc = pd.DataFrame({"sample": samples})
-        sc["S_focal_cn"] = sc["sample"].map(
-            focal_df.set_index("sample")["s_focal"]).fillna(0.0)
-        sc["n_focal_events"] = sc["sample"].map(
-            focal_df.set_index("sample")["n_focal"]).fillna(0).astype(int)
+        sc["S_focal_cn"] = sc["sample"].map(focal_map).fillna(0.0)
+        sc["n_focal_events"] = sc["sample"].map(nfocal_map).fillna(0).astype(int)
         sc["S_arm_cn"] = sc["sample"].map(
             arm_ev.groupby("sample")["C"].apply(
                 lambda x: np.abs(x).sum())).fillna(0.0)
@@ -550,7 +556,7 @@ def run_module_abs(cfg: dict[str, Any],
         ok, msg = _run_r_pipeline(cfg, acfg, missing)
         if not ok:
             return skip(msg)
-        print(f"  [ABS] R/FACETS pipeline: {msg}")
+        print(f"  [ABS] R/ASCAT pipeline: {msg}")
         cn_tables, seg_tables, missing = _load_abs_tables(cfg, data, acfg)
         if missing:
             return skip("pipeline ran but tables still missing for "
@@ -641,7 +647,16 @@ def run_module_abs(cfg: dict[str, Any],
     sum_rows = []
     if len(wgd):
         main = wgd[~wgd["comparison"].str.contains("high-purity", na=False)]
+
+        def _mode_of(cid: str, col: str) -> str:
+            t = cn_tables.get(cid)
+            if t is None or col not in t.columns:
+                return ""
+            v = t[col].dropna()
+            return str(v.iloc[0]) if len(v) else ""
+
         for r in main.itertuples():
+            ca, cb = r.comparison.split("_vs_")
             mp = metrics[(metrics["comparison"] == r.comparison)]
             sum_rows.append(dict(
                 comparison=r.comparison, wgd_frac_a=r.wgd_frac_a,
@@ -652,6 +667,10 @@ def run_module_abs(cfg: dict[str, Any],
                 ploidy_p=(mp.loc[mp["metric"] == "ploidy_abs", "p_mw"].iloc[0]
                           if len(mp) else np.nan),
                 n_low_purity=len(low_purity),
+                germline_mode_a=_mode_of(ca, "germline_mode"),
+                germline_mode_b=_mode_of(cb, "germline_mode"),
+                het_source_a=_mode_of(ca, "het_source"),
+                het_source_b=_mode_of(cb, "het_source"),
             ))
     summary = pd.DataFrame(sum_rows)
 

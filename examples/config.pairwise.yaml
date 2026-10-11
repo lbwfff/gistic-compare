@@ -122,7 +122,9 @@ analysis:
   #   raw_dir: raw_snp6/           # marker-level logR/BAF dir (vs data_root)
   #   manifest: absolute_manifest.tsv
   #   # manifest columns: sample, cohort, logr, baf
-  #   #                  [, germline_logr, germline_baf]  (paths vs manifest)
+  #   #                  [, germline_logr, germline_baf   (matched normal)
+  #   #                   | het_calls]                    (Birdseed AA/AB/BB;
+  #   #                    tumour-only het proxy — paths vs manifest)
   #   cn_thr_wgd: 3.0              # WGD heuristic A total-CN threshold
   #   loh_frac_wgd: 0.30           # heuristic A genome fraction (sens 0.2-0.5)
   #   min_purity: 0.30             # R05 4.5 low-purity flag

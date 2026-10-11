@@ -181,7 +181,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 - P10：`permtest.cn_thr: 0.25`、`n_perm: 10000`、`stat: zprop|wald`、`max_segments: 2000`
 - PQ：无需配置（自动发现本次运行的 p 值集合）
 - PD：`diag.neutral_band: 0.25`、`smooth_windows: 20`
-- ABS：`absolute_cn.tool: ascat`、`raw_dir: raw_snp6/`、`manifest: absolute_manifest.tsv`（列：sample, cohort, logr, baf [, germline_logr, germline_baf]，路径相对 manifest）、`cn_thr_wgd: 3.0`、`loh_frac_wgd: 0.30`（敏感性 0.2–0.5）、`min_purity: 0.30`、`ploidy_wgd: 3.7`、`penalty: 70`、`gamma: 0.55`；表缺失但 R+ASCAT 可用时自动走管线模式（Rscript R/absolute_cn.R），否则跳过
+- ABS：`absolute_cn.tool: ascat`、`raw_dir: raw_snp6/`、`manifest: absolute_manifest.tsv`（列：sample, cohort, logr, baf [, germline_logr, germline_baf | het_calls]；路径相对 manifest；het_calls = 样本自己的 Birdseed 基因型 AA/AB/BB，无 matched normal 时的 tumor-only het 代理）、`cn_thr_wgd: 3.0`、`loh_frac_wgd: 0.30`（敏感性 0.2–0.5）、`min_purity: 0.30`、`ploidy_wgd: 3.7`、`penalty: 70`、`gamma: 0.55`；表缺失但 R+ASCAT 可用时自动走管线模式（Rscript R/absolute_cn.R），否则跳过
 
 ## 测试
 

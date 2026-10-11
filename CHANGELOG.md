@@ -33,6 +33,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   tool-independent.  Synthetic ASCAT inputs (known-truth marker-level
   logR/BAF in ASCAT's gamma-convention) drive the end-to-end test;
   R tests skip cleanly when Rscript/ASCAT is unavailable.
+- **Module ABS — tumour-only het handling**: ASCAT 3.2 crashes without
+  germline input (the het genotype matrix must be provided explicitly);
+  the wrapper now supports a `het_calls` manifest column — the samples'
+  own Birdseed genotype calls (AA/AB/BB, or 0/1/2) passed to
+  `ascat.aspcf(ascat.gg=...)` — with a fallback to ASCAT's built-in
+  `predictGermlineGenotypes`.  Mode provenance is recorded in the
+  per-sample table (`germline_mode`, `het_source`) and in
+  `ABS_summary.tsv` (`germline_mode_a/b`, `het_source_a/b`).  Tumour-only
+  makes `loh_frac`/`cnloh_frac` lower-bound estimates (somatic-LOH loci
+  drop out of the het set); total-CN/WGD signals are unaffected.  On the
+  synthetic truth the tumour-only run recovers purity/ploidy/WGD on par
+  with the matched run.  Also fixed: `_cn_scores` crashed on
+  zero-segment tables (all-samples-failed cohorts); leftover "FACETS"
+  strings replaced.
 - **Module PD (pairwise) — baseline/batch diagnostic**: per-sample
   baselines (median of neutral segments), genome-wide shift-structure
   tracks, and the centering-sensitivity experiment — P4-style window

@@ -160,7 +160,15 @@ FACETS 不直接输出 WGD 标签，按等位基因定义实现（手册 §4.6 �
 ## 9. 开放问题
 
 1. **匹配 normal 是否存在**？CUE/CHB 的 SNP6 运行是否包含 normal 样本？
-   （决定 FACETS 跑法与可靠性声明）
+   （决定 matched vs pooled-normal vs tumor-only）
+   **2026-10 部分解决**：tumor-only 路径已实现且验证——het SNP 用样本
+   自己的 Birdseed 基因型调用（`het_calls` manifest 列，经 ascat.gg 传
+   ASCAT；SNP6 阵列测的就是种系基因型），或回退 ASCAT 内置推断；
+   `Germline_LogR` 在 ASCAT 拟合阶段本来就不使用（源码确认），logR 参照
+   由 HAPMAP 标准化承担（TCGA 标准做法）。代价：体细胞 LOH 位点在
+   tumor 调用里呈纯合 → 从 het 集合消失 → `loh_frac`/`cnloh_frac` 为
+   **下限估计**（`germline_mode`/`het_source` 列记录）；logR/WGD 影响
+   小。若队列含 normal 样本，可抽做 pooled-normal 对照估偏差。
 2. GEO 系列公开的是 Birdseed 调用（含 BAF）还是仅 CEL？决定第 2 步用
    现成调用还是自行 genotype。
 3. 纯度校正逐峰（§4.4 最后一行）放 ABS 还是扩展 P3（两模块都要用纯度时

@@ -154,7 +154,8 @@ def synth_ascat_inputs(root, cohort: str, n_samples: int = 4,
                        wgd: bool = True, purity: float = 0.75,
                        seed: int = 42, sample_names: list[str] | None = None,
                        n_markers_per_chr: int = 800,
-                       gamma: float = 0.55) -> pd.DataFrame:
+                       gamma: float = 0.55,
+                       het_calls: bool = False) -> pd.DataFrame:
     """Write per-sample marker-level logR/BAF TSVs (chr, pos, value) plus
     one pooled-germline pair under ``root``; returns the manifest rows
     (without cohort-ordering guarantees)."""
@@ -176,6 +177,15 @@ def synth_ascat_inputs(root, cohort: str, n_samples: int = 4,
     pd.DataFrame({"chr": grid["chr"], "pos": grid["pos"],
                   "value": gbaf.round(4)}).to_csv(gbaf_path, sep="\t",
                                                   index=False)
+    het_path = None
+    if het_calls:
+        # birdseed-style genotype calls derived from the germline BAF:
+        # BAF ~ 0.5 -> AB (het), near 0/1 -> AA/BB (hom)
+        call = np.where(np.abs(gbaf - 0.5) < 0.15, "AB",
+                        np.where(gbaf < 0.5, "AA", "BB"))
+        het_path = root / "germline_het.tsv"
+        pd.DataFrame({"chr": grid["chr"], "pos": grid["pos"],
+                      "call": call}).to_csv(het_path, sep="\t", index=False)
 
     truth = (DEFAULT_ARM_TRUTH_WGD if wgd else DEFAULT_ARM_TRUTH_NO_WGD)
     arms_per_chr = 2
@@ -207,8 +217,11 @@ def synth_ascat_inputs(root, cohort: str, n_samples: int = 4,
         pd.DataFrame({"chr": grid["chr"], "pos": grid["pos"],
                       "value": np.round(np.clip(bf, 0, 1), 4)}).to_csv(
             baf_path, sep="\t", index=False)
-        rows.append(dict(sample=s, cohort=cohort,
-                         logr=lr_path.name, baf=baf_path.name,
-                         germline_logr=glr_path.name,
-                         germline_baf=gbaf_path.name))
+        row = dict(sample=s, cohort=cohort,
+                   logr=lr_path.name, baf=baf_path.name,
+                   germline_logr=glr_path.name,
+                   germline_baf=gbaf_path.name)
+        if het_path is not None:
+            row["het_calls"] = het_path.name
+        rows.append(row)
     return pd.DataFrame(rows)

@@ -194,3 +194,92 @@ def test_abs_r_pipeline_end_to_end(pairwise_config, tmp_path):
     for metric in ("purity", "ploidy_abs"):
         rr = metrics[metrics["metric"] == metric].iloc[0]
         assert rr["cohort_higher"] == "a"
+
+
+@pytest.mark.skipif(not _has_ascat(), reason="Rscript/ASCAT unavailable")
+def test_abs_r_pipeline_tumor_only_het_calls(pairwise_config, tmp_path):
+    """Tumour-only mode: het SNPs from the samples' own Birdseed calls
+    (het_calls manifest column) — truth recovery on par with matched
+    mode; germline_mode/het_source recorded in output + summary."""
+    import yaml
+
+    from synth_absolute import synth_ascat_inputs
+    synth_root = pairwise_config.parent
+    raw = synth_root / "raw_snp6"
+    ma = synth_ascat_inputs(raw, "a", n_samples=4, wgd=True, purity=0.80,
+                            seed=41, het_calls=True,
+                            sample_names=[f"A{i}" for i in range(1, 9)])
+    mb = synth_ascat_inputs(raw, "b", n_samples=4, wgd=False, purity=0.60,
+                            seed=42, het_calls=True,
+                            sample_names=[f"B{i}" for i in range(1, 9)])
+    manifest = pd.concat([ma, mb], ignore_index=True)
+    manifest = manifest.drop(columns=["germline_logr", "germline_baf"])
+    manifest.to_csv(raw / "manifest_tonly.tsv", sep="\t", index=False)
+
+    cfg = yaml.safe_load(open(pairwise_config))
+    cfg.setdefault("analysis", {})["absolute_cn"] = {
+        "tool": "ascat", "raw_dir": "raw_snp6",
+        "manifest": "manifest_tonly.tsv"}
+    path = pairwise_config.parent / "config_abs_tonly.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+
+    from gistic_compare.cli import main
+    out = tmp_path / "out_abs_tonly"
+    assert main(["--config", str(path), "--modules", "ABS",
+                 "--outdir", str(out), "--skip-figures"]) == 0
+    tables = out / "test_pair" / "tables"
+    assert not (tables / "ABS_skipped.txt").exists()
+
+    cn_a = pd.read_csv(synth_root / "A" / "absolute_cn_a.tsv", sep="\t")
+    assert (cn_a["germline_mode"] == "tumor_only").all()
+    assert (cn_a["het_source"] == "birdseed_calls").all()
+    assert (cn_a["fit_ok"] == 1).all()
+    # truth recovery on par with the matched-mode run
+    assert (cn_a["wgd_frac"] > 0.3).all()
+    assert (cn_a["ploidy_abs"] > 2.5).all()
+    cn_b = pd.read_csv(synth_root / "B" / "absolute_cn_b.tsv", sep="\t")
+    assert (cn_b["wgd_status"] == 0).all()
+    assert (cn_b["ploidy_abs"] < 2.5).all()
+
+    summary = pd.read_csv(tables / "ABS_summary.tsv", sep="\t")
+    assert summary["germline_mode_a"].iloc[0] == "tumor_only"
+    assert summary["het_source_a"].iloc[0] == "birdseed_calls"
+
+
+@pytest.mark.skipif(not _has_ascat(), reason="Rscript/ASCAT unavailable")
+def test_abs_r_pipeline_inferred_fallback(pairwise_config, tmp_path):
+    """No germline, no het_calls -> ASCAT's built-in inference; on the
+    synthetic data the AffySNP6 genotype priors do not match, so the
+    per-sample failure tolerance kicks in (fit_ok=0 rows) instead of a
+    crash."""
+    import yaml
+
+    from synth_absolute import synth_ascat_inputs
+    synth_root = pairwise_config.parent
+    raw = synth_root / "raw_snp6"
+    ma = synth_ascat_inputs(raw, "a", n_samples=4, wgd=True, purity=0.80,
+                            seed=51, sample_names=[f"A{i}"
+                                                   for i in range(1, 9)])
+    mb = synth_ascat_inputs(raw, "b", n_samples=4, wgd=False, purity=0.60,
+                            seed=52, sample_names=[f"B{i}"
+                                                   for i in range(1, 9)])
+    manifest = pd.concat([ma, mb], ignore_index=True)
+    manifest = manifest.drop(columns=["germline_logr", "germline_baf"])
+    manifest.to_csv(raw / "manifest_inf.tsv", sep="\t", index=False)
+    cfg = yaml.safe_load(open(pairwise_config))
+    cfg.setdefault("analysis", {})["absolute_cn"] = {
+        "tool": "ascat", "raw_dir": "raw_snp6",
+        "manifest": "manifest_inf.tsv"}
+    path = pairwise_config.parent / "config_abs_inf.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    from gistic_compare.cli import main
+    out = tmp_path / "out_abs_inf"
+    assert main(["--config", str(path), "--modules", "ABS",
+                 "--outdir", str(out), "--skip-figures"]) == 0
+    tables = out / "test_pair" / "tables"
+    cn_a = pd.read_csv(synth_root / "A" / "absolute_cn_a.tsv", sep="\t")
+    assert (cn_a["germline_mode"] == "tumor_only").all()
+    assert (cn_a["het_source"] == "inferred").all()
+    # the failure-tolerance rows are written either way
+    assert "fit_ok" in cn_a.columns
+    assert not (tables / "ABS_skipped.txt").exists()

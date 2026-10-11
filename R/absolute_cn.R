@@ -3,19 +3,33 @@
 # Phase 2 wrapper; see docs/plan_absolute_cn.md §4.3).
 #
 # Reads a manifest (sample, cohort, logr, baf [, germline_logr,
-# germline_baf]) whose paths are relative to the manifest directory,
-# runs ASCAT 3.x on every sample of one cohort, applies the WGD
-# heuristics from plan §5, and writes the harmonized tables consumed by
-# the Python module `gistic_compare/pairwise_absolute.py`:
+# germline_baf] [, het_calls]) whose paths are relative to the manifest
+# directory, runs ASCAT 3.x on every sample of one cohort, applies the
+# WGD heuristics from plan §5, and writes the harmonized tables consumed
+# by the Python module `gistic_compare/pairwise_absolute.py`:
 #
 #   <out-dir>/absolute_cn_<cohort>.tsv    one row per sample
 #   <out-dir>/absolute_seg_<cohort>.tsv   one row per allelic segment
 #
 # Marker files are tab-separated with columns (chr, pos, value); all
 # samples of a cohort must share the same chr/pos grid (pre-harmonized,
-# e.g. from Birdseed logR/BAF on the SNP6 marker list).  Germline
-# columns are optional; without them ASCAT runs in tumor-only mode
-# (plan §9.1).
+# e.g. from Birdseed logR/BAF on the SNP6 marker list).
+#
+# Germline handling (the germline data's only role in ASCAT's array
+# pipeline is het-SNP selection — the copy-number fit consumes tumour
+# logR/BAF exclusively):
+#   matched     germline_logr/germline_baf columns (measured BAF);
+#               takes precedence when both are present
+#   het_calls   the samples' OWN Birdseed genotype calls (AA/AB/BB, or
+#               0/1/2): SNP6 arrays measure the germline genotype at
+#               most loci, so the tumour array itself is a valid
+#               germline-genotype proxy — passed to ascat.aspcf via
+#               ascat.gg.  Tumour-only caveat (plan §9.1): loci with
+#               somatic LOH look homozygous in the tumour calls and drop
+#               out of the het set, so loh_frac/cnloh_frac are
+#               lower-bound estimates (recorded in germline_mode).
+#   inferred    no germline and no het_calls: ASCAT's built-in
+#               predictGermlineGenotypes(platform="AffySNP6")
 #
 # Per-sample failure tolerance (plan §4.3): a failing sample is reported
 # in the per-sample table (fit_ok=0, note) instead of interrupting the
@@ -112,9 +126,6 @@ for (i in seq_along(tumor_logr)) {
   }
 }
 
-has_germline <- all(c("germline_logr", "germline_baf") %in% names(man)) &&
-  all(!is.na(man$germline_logr)) && all(!is.na(man$germline_baf))
-
 work <- file.path(out_dir, "ASCAT_input")
 dir.create(work, recursive = TRUE, showWarnings = FALSE)
 write_wide <- function(frames, path) {
@@ -128,6 +139,35 @@ write_wide <- function(frames, path) {
 write_wide(lapply(tumor_logr, `[[`, 3), file.path(work, "Tumor_LogR.txt"))
 write_wide(lapply(tumor_baf, `[[`, 3), file.path(work, "Tumor_BAF.txt"))
 
+# ---------------------------------------------------------------------------
+# germline mode
+#   matched      germline_logr + germline_baf columns (measured BAF)
+#   tumor_only   the samples' OWN Birdseed genotype calls (het_calls
+#                columns; SNP6 arrays measure the germline genotype at
+#                most loci) — passed to ascat.aspcf via ascat.gg
+#   tumor_only   last resort: ASCAT's built-in genotype inference
+#                (predictGermlineGenotypes, AffySNP6 platform priors)
+# A matched germline takes precedence over het_calls; both partially
+# present (some samples only) is an error.
+# ---------------------------------------------------------------------------
+has_het <- "het_calls" %in% names(man) &&
+  all(!is.na(man$het_calls) & man$het_calls != "")
+has_germline <- all(c("germline_logr", "germline_baf") %in% names(man)) &&
+  all(!is.na(man$germline_logr)) && all(!is.na(man$germline_baf))
+if (has_germline && has_het) {
+  warning("manifest has both germline and het_calls columns — the matched ",
+          "germline takes precedence; het_calls ignored")
+  has_het <- FALSE
+}
+germline_mode <- "tumor_only"
+het_source <- "inferred"
+if (has_germline) {
+  germline_mode <- "matched"
+  het_source <- "germline_baf"
+} else if (has_het) {
+  het_source <- "birdseed_calls"
+}
+
 if (has_germline) {
   germline_logr <- lapply(man$germline_logr,
                           function(p) read_marker_file(resolve(p), "logr"))
@@ -138,8 +178,12 @@ if (has_germline) {
   write_wide(lapply(germline_baf, `[[`, 3),
              file.path(work, "Germline_BAF.txt"))
   cat(sprintf("[abs] germline matched for all %d sample(s)\n", nrow(man)))
+} else if (has_het) {
+  cat(sprintf("[abs] tumor-only mode: het SNPs from the samples' own ",
+              "Birdseed calls (%d sample(s))\n", nrow(man)))
 } else {
-  cat("[abs] no germline columns in manifest -> ASCAT tumor-only mode\n")
+  cat("[abs] no germline columns and no het_calls -> ASCAT built-in ",
+      "tumor-only genotype inference\n")
 }
 
 ascat.data <- ascat.loadData(
@@ -148,9 +192,58 @@ ascat.data <- ascat.loadData(
   if (has_germline) file.path(work, "Germline_LogR.txt") else NULL,
   if (has_germline) file.path(work, "Germline_BAF.txt") else NULL,
   chrs = c(1:22))
-ascat.data <- ascat.aspcf(ascat.data, penalty = penalty, seed = seed,
-                          out.dir = tempdir())
-ascat.output <- ascat.runAscat(ascat.data, gamma = gamma)
+
+ascat.gg <- NULL
+if (!has_germline && has_het) {
+  # per-sample Birdseed call files (chr, pos, call): AA/BB (or 0/2, hom)
+  # = germline homozygous, AB (or 1, het) = heterozygous; NA = unknown
+  read_call_file <- function(p) {
+    d <- read.delim(p, stringsAsFactors = FALSE, check.names = FALSE)
+    lc <- tolower(names(d))
+    i_chr <- which(lc %in% c("chr", "chrom", "chromosome"))
+    i_pos <- which(lc %in% c("pos", "position", "start"))
+    i_val <- which(lc %in% c("call", "genotype", "gt", "het_calls", "value"))
+    if (!length(i_chr) || !length(i_pos) || !length(i_val)) {
+      stop(sprintf("call file %s lacks chr/pos/call columns (got: %s)",
+                   basename(p), paste(names(d), collapse = ",")))
+    }
+    d[, c(i_chr[1], i_pos[1], i_val[1])]
+  }
+  calls <- lapply(man$het_calls, function(p) read_call_file(resolve(p)))
+  for (i in seq_along(calls)) {
+    g <- calls[[i]][, 1:2]
+    if (!identical(dim(g), dim(grid)) ||
+        !isTRUE(all.equal(as.data.frame(g), as.data.frame(grid)))) {
+      stop("call grids differ from the marker grid (first mismatch near ",
+           "sample ", man$sample[i], ") — het_calls must be on the same ",
+           "marker list as logr/baf")
+    }
+  }
+  raw <- do.call(cbind, lapply(calls, function(d)
+    tolower(as.character(d[[3]]))))
+  het_mat <- matrix(NA, nrow = nrow(grid), ncol = length(calls),
+                    dimnames = list(sprintf("M%d", seq_len(nrow(grid))),
+                                    man$sample))
+  het_mat[raw %in% c("ab", "1", "het")] <- FALSE
+  het_mat[raw %in% c("aa", "bb", "0", "2", "hom", "homz")] <- TRUE
+  ascat.gg <- list(germlinegenotypes = !het_mat)
+}
+
+if (has_germline) {
+  ascat.data <- ascat.aspcf(ascat.data, penalty = penalty, seed = seed,
+                            out.dir = tempdir())
+} else if (!is.null(ascat.gg)) {
+  ascat.data <- ascat.aspcf(ascat.data, ascat.gg = ascat.gg,
+                            penalty = penalty, seed = seed,
+                            out.dir = tempdir())
+} else {
+  gg <- ascat.predictGermlineGenotypes(ascat.data, platform = "AffySNP6",
+                                       img.dir = tempdir())
+  ascat.data <- ascat.aspcf(ascat.data, ascat.gg = gg, penalty = penalty,
+                            seed = seed, out.dir = tempdir())
+}
+ascat.output <- ascat.runAscat(ascat.data, gamma = gamma,
+                               img.dir = tempdir())
 
 # ---------------------------------------------------------------------------
 # per-sample harmonized metrics + WGD heuristics
@@ -222,6 +315,7 @@ for (i in seq_len(nrow(man))) {
       wgd_flag_b = as.integer(wgd_b),
       wgd_disagreement = as.integer(wgd_a != wgd_b),
       non_aberrant = as.integer(note == "non-aberrant"),
+      germline_mode = germline_mode, het_source = het_source,
       fit_ok = 1L, note = note, stringsAsFactors = FALSE)
   } else {
     if (note == "") note <- "no segments or fit failed"
@@ -231,6 +325,7 @@ for (i in seq_len(nrow(man))) {
       cnloh_frac = NA_real_, n_segments_allelic = 0L,
       flag_low_purity = NA, wgd_flag_b = NA_integer_,
       wgd_disagreement = NA_integer_, non_aberrant = NA_integer_,
+      germline_mode = germline_mode, het_source = het_source,
       fit_ok = 0L, note = trimws(note), stringsAsFactors = FALSE)
     cat(sprintf("[abs] WARNING sample %s failed: %s\n", s, note))
   }

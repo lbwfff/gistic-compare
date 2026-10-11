@@ -276,3 +276,13 @@ summaries.
 - **Low-purity QC** (R05 §4.5): samples with purity < `min_purity`
   (0.30) are flagged; the headline WGD test is re-run without them and
   the delta is recorded in `ABS_summary.tsv`.
+- **Tumour-only caveat** (`germline_mode = tumor_only`): without a
+  matched/pooled germline, het SNPs come from the samples' own Birdseed
+  genotype calls (`het_source = birdseed_calls`; a SNP6 array measures
+  the germline genotype at most loci) or from ASCAT's built-in
+  inference (`inferred`).  Somatic-LOH loci look homozygous in tumour
+  calls and drop out of the het set, so **`loh_frac`/`cnloh_frac` are
+  lower-bound estimates** and CN-LOH segments may be missed entirely;
+  total-CN (logR) signals are unaffected.  `ABS_summary.tsv` records
+  `germline_mode_a/b` + `het_source_a/b` for provenance — quote them
+  with any WGD frequency.
