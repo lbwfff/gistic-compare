@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Module ABS (pairwise) — absolute copy-number comparisons (Phase 1,
+  table mode)**: reads harmonized FACETS-output tables per cohort
+  (`absolute_cn_<cid>.tsv`, `absolute_seg_<cid>.tsv`) and runs the full
+  between-cohort suite: WGD frequency (Fisher + odds ratio), purity /
+  ploidy / LOH / CN-LOH (MW + rank-biserial), P9's three-level burden
+  transplanted into copy-number space, and purity-adjusted per-peak
+  logistic models.  Low-purity QC with a high-purity-only sensitivity
+  rerun.  The R/FACETS pipeline mode ships in Phase 2 (see
+  `docs/plan_absolute_cn.md`); until then the tables must exist per
+  cohort (synthetic generator in `tests/synth_absolute.py`).  Outputs:
+  `ABS_wgd.tsv`, `ABS_purity_ploidy.tsv`, `ABS_cn_scores.tsv`,
+  `ABS_cn_tests.tsv`, `ABS_purity_adjusted_peaks.tsv`, `ABS_summary.tsv`.
 - **Module PD (pairwise) — baseline/batch diagnostic**: per-sample
   baselines (median of neutral segments), genome-wide shift-structure
   tracks, and the centering-sensitivity experiment — P4-style window

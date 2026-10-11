@@ -1,7 +1,9 @@
 # 设计文档：绝对拷贝数扩展工作流（模块 ABS + 全套统计）
 
-> 状态：**设计冻结，待数据**。本文档记录 Yuan et al. 2018（R05 手册 §4）WGD/纯度/倍性
-> 分析在 gistic-compare 中的落地设计。实现启动条件见 §8 检查清单。
+> 状态：**Phase 1 已实现（table mode，2026-10）**——模块
+> `pairwise_absolute.py` 读取两份 harmonized 表并完成全套比较统计；
+> Phase 2（`R/absolute_cn.R` 的 FACETS pipeline 模式）与 Phase 3（真实
+> 数据）待数据/环境到位后启动（§8 检查清单）。
 >
 > 决策记录：工具选 **FACETS**（否决 HAPSEG+ABSOLUTE 遗留链与 ASCAT，理由 §3）；
 > 范围选**全套统计**（用户确认，§5）；语言集成选 **subprocess + Rscript**

@@ -20,6 +20,7 @@ from . import (  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402
     gs_score,
     io_gistic,  # noqa: E402
     novelty,
+    pairwise_absolute,
     pairwise_amplitude,
     pairwise_arm,
     pairwise_burden,
@@ -78,6 +79,8 @@ PAIRWISE_MODULES = {
            plotting.figures_pq),
     "PD": ("baseline/batch diagnostic (lambda inflation)",
            pairwise_diag.run_module_pd, plotting.figures_pd),
+    "ABS": ("absolute copy-number comparisons (FACETS tables)",
+            pairwise_absolute.run_module_abs, plotting.figures_abs),
     "CF": ("confounder sensitivity (independent)", confounding.run_module_confounding,
            plotting.figures_confounding),
     "GS": ("G-score differential (permutation)", gs_score.run_module_gs,
