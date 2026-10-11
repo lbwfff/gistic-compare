@@ -20,6 +20,8 @@ outputs side by side:
 - *Is one cohort globally more rearranged — focal or broad?* (P9)
 - *Which differences survive burden control and quality checks?* (P10, PQ, PD)
 - *How much of the observed difference could confounders explain?* (CF)
+- *Do WGD frequency, purity or absolute ploidy differ between cohorts — and do
+  peak effects survive purity adjustment?* (ABS — optional, needs raw SNP6 data)
 
 ## Installation
 
@@ -76,6 +78,11 @@ Each cohort folder must contain the GISTIC files named `<prefix>.<suffix>`:
 | `<prefix>.D.cap1.5.mat` | P5, GS, P7–P9 (optional) |
 | `<prefix>.broad_values_by_arm.txt` | P6 (optional; else derived from seg) |
 | `<prefix>.amp_qv.conf_90.txt` / `.del_qv.conf_90.txt` | P6 (optional, display-only) |
+
+Module **ABS** is the one optional extension that needs data *beyond* GISTIC
+outputs: marker-level tumour logR/BAF (SNP6 Birdseed chain) plus R with the
+ASCAT package.  Without them it skips with a reason — every other module runs
+on the tables above.
 
 ## The two workflows
 
@@ -198,7 +205,9 @@ Modules run independently; one failing module does not abort the rest
 git clone https://github.com/lbwfff/gistic-compare
 cd gistic-compare
 pip install -e ".[dev]"
-pytest          # 65 tests, incl. end-to-end runs on synthetic GISTIC data
+pytest          # 97 tests: parsing/config/intervals/stats + end-to-end runs
+                # on synthetic GISTIC data + per-module tests; the ABS
+                # R/ASCAT pipeline tests skip cleanly without Rscript+ASCAT
 ruff check src tests
 ```
 

@@ -49,7 +49,7 @@ def test_abs_end_to_end(pairwise_config, tmp_path):
 
     cfg = yaml.safe_load(open(pairwise_config))
     cfg.setdefault("analysis", {})["absolute_cn"] = {
-        "tool": "facets", "min_purity": 0.30, "loh_frac_wgd": 0.30}
+        "tool": "ascat", "min_purity": 0.30, "loh_frac_wgd": 0.30}
     path = pairwise_config.parent / "config_abs.yaml"
     path.write_text(yaml.safe_dump(cfg))
 
@@ -104,7 +104,7 @@ def test_abs_low_purity_sensitivity(pairwise_config, tmp_path):
     synth_absolute_tables(synth_root / "B", "b", seed=22,
                           sample_names=[f"B{i}" for i in range(1, 9)])
     cfg = yaml.safe_load(open(pairwise_config))
-    cfg.setdefault("analysis", {})["absolute_cn"] = {"tool": "facets"}
+    cfg.setdefault("analysis", {})["absolute_cn"] = {"tool": "ascat"}
     path = pairwise_config.parent / "config_abs2.yaml"
     path.write_text(yaml.safe_dump(cfg))
     from gistic_compare.cli import main

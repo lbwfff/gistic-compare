@@ -190,7 +190,7 @@ def _rscript() -> str | None:
     return shutil.which("Rscript")
 
 
-def _facets_available(rscript: str) -> bool:
+def _ascat_available(rscript: str) -> bool:
     return _r_pkg_available(rscript, "ASCAT")
 
 
@@ -219,7 +219,7 @@ def _run_r_pipeline(cfg: dict[str, Any], acfg: dict,
         return False, (f"R wrapper not found: {script} — set "
                        "analysis.absolute_cn.r_script or place harmonized "
                        "tables per cohort")
-    if not _facets_available(rscript):
+    if not _ascat_available(rscript):
         return False, ("R package 'ASCAT' not available — install via "
                        "remotes::install_github('VanLoo-lab/ascat') (the "
                        "package directory is ascat-master/ASCAT, and its "
@@ -547,9 +547,10 @@ def run_module_abs(cfg: dict[str, Any],
                     cn_tests=empty, purity_peaks=empty, summary=empty,
                     skipped=msg)
 
-    if acfg["tool"] not in ("ascat", "facets"):
-        return skip(f"unknown tool: {acfg['tool']!r} (supported: ascat; "
-                    "facets reserved for count-based sequencing input)")
+    if acfg["tool"] != "ascat":
+        return skip(f"unknown tool: {acfg['tool']!r} — only 'ascat' is "
+                    "implemented (a FACETS count-based path is reserved "
+                    "for future sequencing input, not implemented)")
 
     cn_tables, seg_tables, missing = _load_abs_tables(cfg, data, acfg)
     if missing:

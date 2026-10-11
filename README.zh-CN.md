@@ -5,7 +5,7 @@
 | workflow | 模块 | 拓扑 | 用途 |
 |---|---|---|---|
 | **benchmark**（默认） | A–G | 星型：各实验 vs 对照 | 评估实验表现、相对对照的特有信号 |
-| **pairwise** | P1–P10, PQ, PD, CF, GS | 两两实验比较（无对照） | P1–P3 检出/一致性（基于 GISTIC 峰/调用），P4/P5 区域级组间差异（P4 用 CBS 分段、P5 用 GISTIC marker 矩阵），P6 臂级 broad 景观，P7 altered 内部幅度，P8 多变量整体可分性，P9 三级负荷+wGII，P10 负担受控逐峰置换，PQ p 值质检，PD 批次/基线诊断，CF 混杂敏感性，GS 振幅差分 |
+| **pairwise** | P1–P10, PQ, PD, CF, GS, ABS | 两两实验比较（无对照） | P1–P3 检出/一致性（基于 GISTIC 峰/调用），P4/P5 区域级组间差异（P4 用 CBS 分段、P5 用 GISTIC marker 矩阵），P6 臂级 broad 景观，P7 altered 内部幅度，P8 多变量整体可分性，P9 三级负荷+wGII，P10 负担受控逐峰置换，PQ p 值质检，PD 批次/基线诊断，CF 混杂敏感性，GS 振幅差分，ABS 绝对拷贝数扩展（ASCAT，需原始数据，缺失自动跳过） |
 
 ## 安装
 
@@ -186,7 +186,8 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 ## 测试
 
 ```bash
-pytest        # 65 个测试：解析/配置/区间/统计 + 两条 workflow 端到端（合成数据）+ P6–P10/PQ/PD 单测
+pytest        # 97 个测试：解析/配置/区间/统计 + 两条 workflow 端到端（合成数据）+ 各模块单测；
+              # ABS 的 R/ASCAT 管线测试在无 Rscript/ASCAT 时自动跳过
 ruff check src tests
 ```
 
