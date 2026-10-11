@@ -18,6 +18,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cohort (synthetic generator in `tests/synth_absolute.py`).  Outputs:
   `ABS_wgd.tsv`, `ABS_purity_ploidy.tsv`, `ABS_cn_scores.tsv`,
   `ABS_cn_tests.tsv`, `ABS_purity_adjusted_peaks.tsv`, `ABS_summary.tsv`.
+- **Module ABS Phase 2 — ASCAT pipeline mode**: if the harmonized tables
+  are missing but `analysis.absolute_cn.{raw_dir,manifest}` exists and
+  Rscript + the ASCAT package are available, the R wrapper
+  `R/absolute_cn.R` runs first (per cohort; per-sample failure
+  tolerance; logged to `ABS_r_pipeline.log`) and emits the harmonized
+  tables consumed by table mode.  Tool decision corrected: **FACETS
+  takes sequencing counts only** (no SNP-array logR/BAF input — the
+  original plan §3 premise was wrong), the primary tool is now **ASCAT
+  3.x** (native SNP-array ancestry; Birdseed genotypes give the het
+  SNPs; tumor-only mode without germline columns).  WGD heuristics A
+  (minor >= 1 & total >= 3 fraction, binary status) and B (ploidy
+  >= 3.7) with a `wgd_disagreement` column are unchanged and
+  tool-independent.  Synthetic ASCAT inputs (known-truth marker-level
+  logR/BAF in ASCAT's gamma-convention) drive the end-to-end test;
+  R tests skip cleanly when Rscript/ASCAT is unavailable.
 - **Module PD (pairwise) — baseline/batch diagnostic**: per-sample
   baselines (median of neutral segments), genome-wide shift-structure
   tracks, and the centering-sensitivity experiment — P4-style window

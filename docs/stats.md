@@ -238,3 +238,41 @@ lambda = median(z^2)/0.4549 (z = Phi^-1(1 - p/2)) and a Q-Q plot.
 - Small sets (n < ~50, e.g. peak layers) give noisy lambda — read them
   together with the Q-Q shape, not by lambda alone.
 
+
+## Module ABS — absolute copy-number comparisons (optional extension)
+
+Runs on ASCAT output (`R/absolute_cn.R` over marker-level logR/BAF from
+the SNP6 Birdseed chain; plan `docs/plan_absolute_cn.md`).  All
+comparisons are unpaired between-cohort tests on per-sample absolute-CN
+summaries.
+
+- **WGD frequency**: 2x2 Fisher (WGD+ vs WGD-) with odds ratio + CI.
+  `wgd_status` is **binary by construction** — a single ASCAT snapshot
+  cannot count multiple whole-genome-doubling rounds reliably (R05 §4.6);
+  the continuous `wgd_frac` carries the graded information.  A table
+  `mean_status` column is descriptive only, never tested.
+- **WGD heuristics (declared, sensitivity-checked)**: A (primary,
+  allelic): autosomal length fraction with minor CN >= 1 AND total CN >=
+  `cn_thr_wgd` (3) >= `loh_frac_wgd` (0.30; sensitivity 0.2-0.5).  B
+  (reference, classical ploidy rule): ploidy >= `ploidy_wgd` (3.7).
+  `wgd_disagreement` marks samples where A and B differ — read those
+  calls as tool-dependent (R05 §4.6 warns different tools call WGD
+  differently).  Sanity range for a solid-tumour cohort: 10-60% WGD+.
+- **purity / ploidy / LOH / CN-LOH**: Mann-Whitney + rank-biserial.
+  Purity and ploidy are simultaneously **confounders of every
+  logR-based comparison** in P1-P10 — this module is where their
+  between-cohort balance is checked.
+- **CN-space burden**: P9's three-level counting transplanted into
+  absolute copy-number space (neutral band +/- `cn_focal_band` copies;
+  broad arm event when the length-weighted mean CN exceeds
+  `cn_arm_gain`/below `cn_arm_del` over > `cn_min_frac` of the arm;
+  pooled rank normalisation + MW).  Thresholds are parameterised, not
+  canonically fixed.
+- **Purity-adjusted per-peak models**: `altered ~ cohort` vs
+  `altered ~ cohort + purity` logistic per union peak (P3 machinery).
+  Purity attenuates logR signal, so a cohort effect that survives
+  purity adjustment is stronger evidence than the crude OR — the
+  covariate only the absolute-CN stage can provide.
+- **Low-purity QC** (R05 §4.5): samples with purity < `min_purity`
+  (0.30) are flagged; the headline WGD test is re-run without them and
+  the delta is recorded in `ABS_summary.tsv`.

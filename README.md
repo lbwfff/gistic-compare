@@ -95,7 +95,7 @@ and *"which signals are specific to my experiment?"*.
 | F | experiment-specific signal fraction (vs control), 4 weightings |
 | G | benchmark against a **reference panel** (numbers externalized to `presets/reference_panels/*.yaml`; disabled unless configured) |
 
-### pairwise (modules P1–P10, PQ, PD, CF, GS) — cohort vs cohort, no control
+### pairwise (modules P1–P10, PQ, PD, CF, GS, ABS) — cohort vs cohort, no control
 
 | ID | question | basis |
 |---|---|---|
@@ -111,6 +111,7 @@ and *"which signals are specific to my experiment?"*.
 | **P10** | which peaks survive once the **global burden** is controlled? (margin-preserving permutation, naive-vs-permutation inflation) | all_lesions `- CN values` rows |
 | **PQ** | are the p-value sets healthy? (Q-Q plots + genomic inflation λ for every scan) | saved tables of the same run |
 | **PD** | **why** is lambda inflated — and what survives baseline removal? (per-sample baseline check, shift-structure track, centering sensitivity with trust layers) | `tumors.seg` |
+| **ABS** | **absolute-copy-number extension** (optional): WGD frequency (Fisher+OR), purity/absolute-ploidy/LOH/CN-LOH (MW), P9's three-level burden in CN space, purity-adjusted per-peak logistic | ASCAT on marker-level logR/BAF (`R/absolute_cn.R`, needs raw data — auto-skips without it) |
 | CF | how large would a confounder have to be to explain the P4/P5 findings? (bounds, not adjustment) | P4/P5 tables |
 | GS | which windows/bands differ in **amplitude** (G-score) rather than frequency? | `D.cap1.5.mat` |
 

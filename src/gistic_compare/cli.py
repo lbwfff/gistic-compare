@@ -79,7 +79,7 @@ PAIRWISE_MODULES = {
            plotting.figures_pq),
     "PD": ("baseline/batch diagnostic (lambda inflation)",
            pairwise_diag.run_module_pd, plotting.figures_pd),
-    "ABS": ("absolute copy-number comparisons (FACETS tables)",
+    "ABS": ("absolute copy-number comparisons (ASCAT tables)",
             pairwise_absolute.run_module_abs, plotting.figures_abs),
     "CF": ("confounder sensitivity (independent)", confounding.run_module_confounding,
            plotting.figures_confounding),

@@ -131,7 +131,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 | F | 实验特有信号占比（vs 对照）：count / freq / −log10(q) / G-score 四种权重 |
 | G | 对照参考面板打分（**数值来自 preset**；未配置则跳过） |
 
-### pairwise（P1–P10, PQ, PD, CF, GS）
+### pairwise（P1–P10, PQ, PD, CF, GS, ABS）
 
 > **定位区分**：P1–P3 回答**检出/一致性**——「两队列各自显著（GISTIC 峰）之后，峰清单/调用是否重合」，不是组间差异检验；低幅度/宽/低频的组间差异天生成不了峰。**P4–P7** 回答**组间差异**——「两队列在同一区域的 CN 分布是否不同」，不依赖 GISTIC 峰（P7 的 peak 层除外）。P8 是全局多变量摘要，**P9 是所有逐位点结果的前置背景层**，**P10 是负担受控的峰检验**，**PQ/PD 是质量闸门**（膨胀与批次/基线诊断）。
 
@@ -149,6 +149,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 | **P10** | **负担受控逐峰置换** | union 峰 × 样本二值矩阵上**同时固定行和（每样本峰数）与列和（每峰频率）**的置换检验；对照 naive p 直接量化负担假阳性（burden_flag）；含着丝粒/端粒峰与高 segment 样本 QC |
 | **PQ** | **p 值质检** | 自动读取本次运行的 P3/P4/P5/GS/P7/P10 全部 p 值集合：Q-Q 图 + 基因组膨胀因子 λ=median(z²)/0.4549（λ>1.1 = 系统性偏倚，先解决再引用结果） |
 | **PD** | **λ 膨胀的批次/基线诊断** | 每样本基线（中性段 seg_mean 中位数）检查 + Δmedian 空间结构轨迹 + **样本内中心化敏感性**：P4 式检验在原始/中心化两套数据各跑一遍，λ 对比 + 每窗口可信度分层（robust / baseline_only / centered_only / ns） |
+| **ABS** | **绝对拷贝数扩展（可选）** | ASCAT（SNP6 logR/BAF，R 包装 `R/absolute_cn.R`）：WGD 频率（Fisher+OR）、纯度/绝对倍性/LOH/CN-LOH（MW+rank-biserial）、CN 空间三级负荷（P9 机制移植）、纯度校正逐峰模型；无原始数据自动跳过 |
 | **CF** | 混杂敏感性 | 只读 P4/P5 表 + 每队列边际分布：E-value、最小解释效应 δ*、偏差上界/去偏下界（**定界**而非校正） |
 | **GS** | 振幅差分 | 逐窗/逐 band G-score 组间差 + 置换检验（normal 或 MC） |
 
@@ -180,6 +181,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 - P10：`permtest.cn_thr: 0.25`、`n_perm: 10000`、`stat: zprop|wald`、`max_segments: 2000`
 - PQ：无需配置（自动发现本次运行的 p 值集合）
 - PD：`diag.neutral_band: 0.25`、`smooth_windows: 20`
+- ABS：`absolute_cn.tool: ascat`、`raw_dir: raw_snp6/`、`manifest: absolute_manifest.tsv`（列：sample, cohort, logr, baf [, germline_logr, germline_baf]，路径相对 manifest）、`cn_thr_wgd: 3.0`、`loh_frac_wgd: 0.30`（敏感性 0.2–0.5）、`min_purity: 0.30`、`ploidy_wgd: 3.7`、`penalty: 70`、`gamma: 0.55`；表缺失但 R+ASCAT 可用时自动走管线模式（Rscript R/absolute_cn.R），否则跳过
 
 ## 测试
 

@@ -54,7 +54,10 @@ Label placement follows one rule everywhere:
 Applied to: CF E-value volcano + required-effect scatter, GS volcano (band /
 window), GS genome Manhattan panels, P1 unique-peak genome, P2 McNemar
 volcano, P7 quadrants/volcanoes (labels only on units significant on at
-least one axis), P10 volcano, P8 stability panels.
+least one axis), P10 volcano, P8 stability panels.  Module ABS adds
+`ABS_wgd_freq` (WGD+ fraction bars with Wilson CIs),
+`ABS_metric_dists` (purity/ploidy/LOH/CN-LOH per cohort), and
+`ABS_purity_adjusted` (crude vs purity-adjusted per-peak OR).
 
 - No descriptive titles inside figures — keep captions in your manuscript.
 

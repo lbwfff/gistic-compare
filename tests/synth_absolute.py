@@ -114,3 +114,101 @@ def synth_absolute_tables(root, cohort: str, n_samples: int = 40,
     cn.to_csv(root / f"absolute_cn_{cohort}.tsv", sep="\t", index=False)
     segs.to_csv(root / f"absolute_seg_{cohort}.tsv", sep="\t", index=False)
     return cn, segs
+
+
+# ---------------------------------------------------------------------------
+# synthetic ASCAT pipeline inputs (Phase 2 R-wrapper tests)
+# ---------------------------------------------------------------------------
+
+def _marker_grid(n_chr: int = 3, per_chr: int = 800, step: int = 100_000
+                 ) -> pd.DataFrame:
+    rows = []
+    for c in range(1, n_chr + 1):
+        start = 1_000_000
+        for k in range(per_chr):
+            rows.append((c, start + k * step))
+    return pd.DataFrame(rows, columns=["chr", "pos"])
+
+
+def _allele_fraction(m_minor: int, total: int, purity: float) -> float:
+    """Expected BAF for a germline-heterozygous SNP under tumor purity
+    ``purity`` and tumor minor/total copy numbers."""
+    f = (purity * m_minor + (1 - purity) * 1.0) \
+        / (purity * total + (1 - purity) * 2.0)
+    return float(np.clip(max(f, 1.0 - f), 0.0, 1.0))
+
+
+def _logr(total: int, purity: float, gamma: float = 0.55) -> float:
+    """ASCAT-convention logR: the observed logR is gamma-compressed
+    (ASCAT's copy-number model is 2^(logR/gamma)); gamma must match the
+    value passed to ascat.runAscat."""
+    return float(gamma * np.log2((purity * total + (1 - purity) * 2.0) / 2.0))
+
+
+# per-chromosome-arm truth: (total, minor); arms = chr1p, chr1q, chr2p, ...
+DEFAULT_ARM_TRUTH_WGD = [(4, 2), (4, 2), (5, 2), (4, 2), (4, 0), (4, 2)]
+DEFAULT_ARM_TRUTH_NO_WGD = [(2, 1), (2, 1), (3, 1), (2, 1), (1, 0), (2, 1)]
+
+
+def synth_ascat_inputs(root, cohort: str, n_samples: int = 4,
+                       wgd: bool = True, purity: float = 0.75,
+                       seed: int = 42, sample_names: list[str] | None = None,
+                       n_markers_per_chr: int = 800,
+                       gamma: float = 0.55) -> pd.DataFrame:
+    """Write per-sample marker-level logR/BAF TSVs (chr, pos, value) plus
+    one pooled-germline pair under ``root``; returns the manifest rows
+    (without cohort-ordering guarantees)."""
+    rng = np.random.default_rng(seed)
+    grid = _marker_grid(per_chr=n_markers_per_chr)
+    n = len(grid)
+
+    # pooled germline reference: mostly heterozygous, a few homozygous
+    gl = rng.normal(0.0, 0.03, n)
+    hom = rng.random(n) < 0.03
+    gbaf = np.where(hom, rng.choice([0.01, 0.99], n),
+                    np.clip(rng.normal(0.5, 0.02, n), 0, 1))
+    root.mkdir(parents=True, exist_ok=True)
+    glr_path = root / "germline_logr.tsv"
+    gbaf_path = root / "germline_baf.tsv"
+    pd.DataFrame({"chr": grid["chr"], "pos": grid["pos"],
+                  "value": gl.round(4)}).to_csv(glr_path, sep="\t",
+                                                index=False)
+    pd.DataFrame({"chr": grid["chr"], "pos": grid["pos"],
+                  "value": gbaf.round(4)}).to_csv(gbaf_path, sep="\t",
+                                                  index=False)
+
+    truth = (DEFAULT_ARM_TRUTH_WGD if wgd else DEFAULT_ARM_TRUTH_NO_WGD)
+    arms_per_chr = 2
+    states = []
+    for c in range(1, grid["chr"].max() + 1):
+        for a in range(arms_per_chr):
+            states.append(truth[(c - 1) * arms_per_chr + a])
+    idx = np.arange(n)
+    markers_per_arm = n_markers_per_chr // arms_per_chr
+    arm_id = np.minimum((idx // n_markers_per_chr) * arms_per_chr
+                        + (idx % n_markers_per_chr) // markers_per_arm,
+                        len(states) - 1)
+
+    names = (list(sample_names) if sample_names
+             else [f"{cohort.upper()}{i + 1:02d}" for i in range(n_samples)])
+    rows = []
+    for i, s in enumerate(names):
+        lr, bf = [], []
+        for j in range(n):
+            total, minor = states[arm_id[j]]
+            lr.append(_logr(total, purity, gamma) + rng.normal(0, 0.02))
+            bf.append(_allele_fraction(minor, total, purity)
+                      + rng.normal(0, 0.01))
+        lr_path = root / f"{s}_logr.tsv"
+        baf_path = root / f"{s}_baf.tsv"
+        pd.DataFrame({"chr": grid["chr"], "pos": grid["pos"],
+                      "value": np.round(lr, 4)}).to_csv(lr_path, sep="\t",
+                                                        index=False)
+        pd.DataFrame({"chr": grid["chr"], "pos": grid["pos"],
+                      "value": np.round(np.clip(bf, 0, 1), 4)}).to_csv(
+            baf_path, sep="\t", index=False)
+        rows.append(dict(sample=s, cohort=cohort,
+                         logr=lr_path.name, baf=baf_path.name,
+                         germline_logr=glr_path.name,
+                         germline_baf=gbaf_path.name))
+    return pd.DataFrame(rows)

@@ -1,9 +1,9 @@
 # 设计文档：绝对拷贝数扩展工作流（模块 ABS + 全套统计）
 
-> 状态：**Phase 1 已实现（table mode，2026-10）**——模块
-> `pairwise_absolute.py` 读取两份 harmonized 表并完成全套比较统计；
-> Phase 2（`R/absolute_cn.R` 的 FACETS pipeline 模式）与 Phase 3（真实
-> 数据）待数据/环境到位后启动（§8 检查清单）。
+> 状态：**Phase 1 + 2 已实现（2026-10）**——`pairwise_absolute.py`
+> （比较统计 + table mode）与 `R/absolute_cn.R`（ASCAT 管线模式，自动
+> 降级）均已落地，合成数据端到端测试通过；Phase 3（真实数据）待数据
+> 到位后启动（§8 检查清单、§9 开放问题）。
 >
 > 决策记录：工具选 **FACETS**（否决 HAPSEG+ABSOLUTE 遗留链与 ASCAT，理由 §3）；
 > 范围选**全套统计**（用户确认，§5）；语言集成选 **subprocess + Rscript**
@@ -42,11 +42,19 @@ CN/WGD）→ 队列间比较统计。回答的问题：
 
 ## 3. 工具决策记录
 
+> **2026-10 修订**：原定 FACETS 为主动工。Phase 2 落地前核对源码发现
+> **FACETS 只有测序 count 输入**（`readSnpMatrix` 读 snp-pileup 的
+> tumor/normal 读数，0.5.14 与 0.6.2 均确认），并无下表所称的
+> "原生支持 SNP6"——该前提有误，予以修正。CUE/CHB 是 SNP6 阵列 +
+> Birdseed 数据，主工具切换为 **ASCAT**（阵列出身、直接消费
+> logR/BAF/基因型调用）。FACETS 保留为将来拿到测序数据时的备选
+> （`tool: facets` 走 count 路径），不作主链路。
+
 | 候选 | 决定 | 理由 |
 |---|---|---|
 | HAPSEG + ABSOLUTE（原文） | ❌ | 2011–2012 遗留链：BEAGLE（Java）+ 按祖源选单倍型面板 + 老版 R 依赖，安装门槛过高；手册 §4.6 自己警告不同工具 WGD 判定可能不同 |
-| **FACETS**（mskcc，Bioconductor 活跃维护） | ✅ | 原生支持 SNP6（为 TCGA 设计）；一次给出纯度/倍性/等位基因特异性分段/cellular prevalence；活跃维护 |
-| ASCAT | 备选交叉验证 | SNP array 出身；如需双工具 WGD 交叉验证（手册 §4.6 #3 建议）可作第二意见 |
+| **ASCAT**（Van Loo et al. 2010；VanLoo-lab/ascat 3.x） | ✅ **主** | SNP array 出身（Affy SNP6 是其原始平台之一）；直接输入每探针 tumor logR/BAF + germline 基因型（Birdseed .calls 直接给 het SNP）；无匹配 normal 时可走 pooled normal / tumor-only 变体；一次给出 purity（aberrant cell fraction）/ploidy/等位基因特异性分段 |
+| FACETS（mskcc，0.6.2） | 备选 | 仅测序 count 输入（readSnpMatrix）；用于将来 WGS/WES/panel 数据的同启发式复算或工具间对照（手册 §4.6 #3 建议） |
 
 ## 4. 管线与模块设计
 
@@ -54,7 +62,7 @@ CN/WGD）→ 队列间比较统计。回答的问题：
 
 Python 包装 + `subprocess` 调 `Rscript R/absolute_cn.R`。否决 rpy2（依赖
 脆弱）。R 环境/包缺失时模块 **skip with reason**——与 P8 缺 sklearn、P5 缺
-D 矩阵的处理一致。R 依赖：`facets`（Bioconductor/GitHub mskcc）。
+D 矩阵的处理一致。R 依赖：`ASCAT`（GitHub VanLoo-lab/ascat，≥3.x）。
 
 ### 4.2 CLI 与配置
 
@@ -119,8 +127,10 @@ FACETS 不直接输出 WGD 标签，按等位基因定义实现（手册 §4.6 �
 
 - Python 侧比较统计：合成绝对 CN 表（两组已知 purity/ploidy/WGD 分布）
   纯 Python 测试，**CI 不需要 R**。
-- R 脚本：`pytest.mark.skipif(Rscript 或 facets 不可用)`；合成一个极小的
-  等位基因特异性输入（几十个 SNP，已知答案）验证端到端。
+- R 脚本（ASCAT 管线）：`pytest.mark.skipif(Rscript 或 ASCAT 不可用)`；
+  合成 marker 级 logR/BAF 输入（已知 WGD/纯度/倍性真相，logR 按
+  ASCAT 的 gamma 约定压缩）验证 Python subprocess → R → harmonized 表
+  → 比较统计的端到端链路。
 - 降级路径：R 缺失 → `ABS_skipped.txt` + manifest skip 记录。
 
 ## 7. 风险与既有警告（全部来自 R05 §4.5/§4.6）
@@ -134,15 +144,18 @@ FACETS 不直接输出 WGD 标签，按等位基因定义实现（手册 §4.6 �
 ## 8. 实施检查清单
 
 - [ ] **数据**：下载/整理两队列的基因型+BAF（或 CEL），建 manifest
-- [ ] **数据**：确认是否有匹配 normal（决定 tumor-normal vs tumor-only）
-- [ ] **环境**：R ≥ 4.x + `facets` 安装验证（`Rscript -e 'library(facets)'`）
-- [ ] 实现 `R/absolute_cn.R`（契约见 §4.3）
-- [ ] 实现 `pairwise_absolute.py`（ABS 模块：R 包装 + 比较统计）
-- [ ] 绘图 `plotting/pairwise_abs.py`
-- [ ] CLI 注册 + `_skip_reasons` 降级 + config schema
-- [ ] 测试：合成比较统计（无 R）+ R 依赖端到端（skipif）
-- [ ] 文档：README 双语、CHANGELOG、stats.md 新增 ABS 章节（含 WGD 启发式声明）
-- [ ] 敏感性：`loh_frac_wgd` 0.2/0.3/0.5；启发式 A vs B 对照表
+- [ ] **数据**：确认是否有匹配 normal（决定 tumor-normal vs pooled-normal / tumor-only）
+- [x] **环境**：R ≥ 4.x + ASCAT 安装验证（VanLoo-lab/ascat 3.2.0；其
+      未使用的 `copynumber` Import 已移除后安装——该包只出现在注释中）
+- [x] 实现 `R/absolute_cn.R`（契约见 §4.3；ASCAT 3.2 API：
+      `ascat.loadData` → `ascat.aspcf(penalty, seed)` → `ascat.runAscat(gamma)`）
+- [x] 实现 `pairwise_absolute.py`（ABS 模块：R 包装 + 比较统计）
+- [x] 绘图 `plotting/pairwise_abs.py`
+- [x] CLI 注册 + `_skip_reasons` 降级 + config schema
+- [x] 测试：合成比较统计（无 R）+ R 依赖端到端（skipif）
+- [x] 文档：README 双语、CHANGELOG、stats.md 新增 ABS 章节（含 WGD 启发式声明）
+- [ ] 敏感性：`loh_frac_wgd` 0.2/0.3/0.5；启发式 A vs B 对照表（机制已实现
+      `wgd_flag_b`/`wgd_disagreement` 列，阈值敏感性待真实数据）
 
 ## 9. 开放问题
 

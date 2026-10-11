@@ -1,16 +1,18 @@
-"""Module ABS (pairwise): absolute copy-number comparisons (FACETS tables).
+"""Module ABS (pairwise): absolute copy-number comparisons (ASCAT tables).
 
-Phase 1 of ``docs/plan_absolute_cn.md``: the **table mode**.  The module
-reads, per cohort, the harmonized FACETS-output tables
+Phase 1+2 of ``docs/plan_absolute_cn.md``.  The R wrapper
+``R/absolute_cn.R`` (Phase 2) runs ASCAT 3.x on each cohort's marker-
+level logR/BAF (SNP6 Birdseed chain) and emits the harmonized tables
 
   absolute_cn_<cid>.tsv    sample, purity, ploidy_abs, wgd_status,
                            wgd_frac, loh_frac, cnloh_frac, ...,
-                           flag_low_purity
+                           flag_low_purity, wgd_flag_b, wgd_disagreement
   absolute_seg_<cid>.tsv   sample, chrom, start, end, cn_total, cn_major,
                            cn_minor
 
-(by default next to the cohort's GISTIC outputs; ``absolute_cn.tables_dir``
-overrides) and runs the full between-cohort suite:
+The Python module reads them (by default next to the cohort's GISTIC
+outputs; ``absolute_cn.tables_dir`` overrides) and runs the full
+between-cohort suite:
 
   WGD              2x2 Fisher (WGD+ vs WGD-) with odds ratio + CI; the
                    mean status (0/1/2) is reported, not tested (a FACETS
@@ -35,8 +37,11 @@ Low-purity QC: samples flagged ``flag_low_purity`` (purity <
 ``min_purity``, default 0.30 — R05 §4.5) are excluded from a sensitivity
 rerun of the headline WGD test; the delta is recorded.
 
-Pipeline mode (calling R/FACETS directly from this module) ships in
-Phase 2; until then a missing table produces ``ABS_skipped.txt``.
+Pipeline mode: if tables are missing but ``analysis.absolute_cn``
+``raw_dir/manifest`` exists and Rscript + the ASCAT package are
+available, the R wrapper runs first (subprocess, logged to
+``ABS_r_pipeline.log``); its output feeds the same table mode.  Without
+R/ASCAT a missing table produces ``ABS_skipped.txt``.
 
 Outputs: ABS_wgd.tsv, ABS_purity_ploidy.tsv, ABS_cn_scores.tsv,
          ABS_cn_tests.tsv, ABS_purity_adjusted_peaks.tsv, ABS_summary.tsv
@@ -44,6 +49,8 @@ Outputs: ABS_wgd.tsv, ABS_purity_ploidy.tsv, ABS_cn_scores.tsv,
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -56,15 +63,24 @@ from .pairwise_burden import _arm_intervals, _load_bands
 from .pairwise_model import build_union_keys
 from .pairwise_regional import _regional_cfg
 
+_DEFAULT_R_SCRIPT = (Path(__file__).resolve().parents[2] / "R"
+                     / "absolute_cn.R")
+
 
 def _abs_cfg(cfg: dict[str, Any], rcfg: dict) -> dict:
     a = (cfg.get("analysis") or {}).get("absolute_cn") or {}
     return dict(
-        tool=str(a.get("tool", "facets")),
+        tool=str(a.get("tool", "ascat")),
         tables_dir=(a.get("tables_dir") or None),
+        raw_dir=str(a.get("raw_dir", "raw_snp6")),
+        manifest=str(a.get("manifest", "absolute_manifest.tsv")),
+        r_script=str(a.get("r_script", _DEFAULT_R_SCRIPT)),
+        penalty=float(a.get("penalty", 70)),
+        gamma=float(a.get("gamma", 0.55)),
         cn_thr_wgd=float(a.get("cn_thr_wgd", 3.0)),
         loh_frac_wgd=float(a.get("loh_frac_wgd", 0.30)),
         min_purity=float(a.get("min_purity", 0.30)),
+        ploidy_wgd=float(a.get("ploidy_wgd", 3.7)),
         cn_arm_gain=float(a.get("cn_arm_gain", 3.5)),
         cn_arm_del=float(a.get("cn_arm_del", 1.5)),
         cn_focal_band=float(a.get("cn_focal_band", 1.0)),
@@ -95,7 +111,7 @@ def _load_abs_tables(cfg: dict[str, Any], data: dict[str, dict],
             cn[cid] = pd.read_csv(p_cn, sep="\t")
             seg[cid] = pd.read_csv(p_seg, sep="\t")
         else:
-            missing.append(f"{cid} ({p_cn.name})")
+            missing.append(cid)
     return cn, seg, missing
 
 
@@ -130,12 +146,23 @@ def _wgd_test(pool: pd.DataFrame, ca: str, cb: str, comp: str) -> dict | None:
     table = [[ka, na - ka], [kb, nb - kb]]
     or_, p = stats.fisher_exact(table, alternative="two-sided")
     lo = hi = np.nan
-    try:
-        from statsmodels.stats.contingency_tables import Table2x2
-        t2 = Table2x2(np.asarray(table))
-        lo, hi = t2.oddsratio_confint()
-    except Exception:
-        pass
+    if np.isfinite(or_):
+        try:
+            from statsmodels.stats.contingency_tables import Table2x2
+            t2 = Table2x2(np.asarray(table))
+            lo, hi = t2.oddsratio_confint()
+        except Exception:
+            pass
+    else:
+        # degenerate 2x2 (a zero cell): Haldane-Anscombe 0.5 correction
+        t2c = np.asarray(table, dtype=float) + 0.5
+        or_ = (t2c[0, 0] * t2c[1, 1]) / (t2c[0, 1] * t2c[1, 0])
+        try:
+            from statsmodels.stats.contingency_tables import Table2x2
+            t2 = Table2x2(t2c)
+            lo, hi = t2.oddsratio_confint()
+        except Exception:
+            pass
     try:
         p_mw = float(stats.mannwhitneyu(a["wgd_status"].to_numpy(float),
                                         b["wgd_status"].to_numpy(float),
@@ -151,6 +178,86 @@ def _wgd_test(pool: pd.DataFrame, ca: str, cb: str, comp: str) -> dict | None:
                 p_fisher=float(p), p_mw_status=p_mw,
                 mean_status_a=round(float(a["wgd_status"].mean()), 4),
                 mean_status_b=round(float(b["wgd_status"].mean()), 4))
+
+
+def _rscript() -> str | None:
+    return shutil.which("Rscript")
+
+
+def _facets_available(rscript: str) -> bool:
+    return _r_pkg_available(rscript, "ASCAT")
+
+
+def _r_pkg_available(rscript: str, pkg: str) -> bool:
+    try:
+        r = subprocess.run(
+            [rscript, "-e",
+             f'cat(requireNamespace("{pkg}", quietly=TRUE))'],
+            capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "TRUE" in r.stdout
+
+
+def _run_r_pipeline(cfg: dict[str, Any], acfg: dict,
+                    missing: list[str]) -> tuple[bool, str]:
+    """Run the R/FACETS wrapper (R/absolute_cn.R) for cohorts whose
+    harmonized tables are missing.  Returns (ok, message)."""
+    rscript = _rscript()
+    if rscript is None:
+        return False, ("Rscript not on PATH — install R or place harmonized "
+                       "absolute_cn_<cid>.tsv / absolute_seg_<cid>.tsv "
+                       "tables per cohort")
+    script = Path(acfg["r_script"]).expanduser()
+    if not script.exists():
+        return False, (f"R wrapper not found: {script} — set "
+                       "analysis.absolute_cn.r_script or place harmonized "
+                       "tables per cohort")
+    if not _facets_available(rscript):
+        return False, ("R package 'ASCAT' not available — install via "
+                       "remotes::install_github('VanLoo-lab/ascat') (the "
+                       "package directory is ascat-master/ASCAT, and its "
+                       "unused 'copynumber' Import may be removed) or place "
+                       "harmonized tables per cohort")
+    manifest = Path(cfg["_root"]) / acfg["raw_dir"] / acfg["manifest"]
+    if not manifest.exists():
+        return False, (f"manifest not found: {manifest} — pipeline mode "
+                       "needs analysis.absolute_cn.raw_dir/manifest "
+                       "(columns: sample, cohort, logr, baf) or harmonized "
+                       "tables per cohort")
+    tdir = Path(cfg["output"]["_tables"])
+    log: list[str] = []
+    for cid in missing:
+        c = cfg["cohorts"][cid]
+        out_dir = (Path(acfg["tables_dir"]).expanduser()
+                   if acfg["tables_dir"] else c["_abs"])
+        cmd = [rscript, str(script), "--manifest", str(manifest),
+               "--cohort", cid, "--out-dir", str(out_dir),
+               "--penalty", str(acfg["penalty"]), "--gamma", str(acfg["gamma"]),
+               "--seed", str(acfg["seed"]),
+               "--cn-thr-wgd", str(acfg["cn_thr_wgd"]),
+               "--loh-frac-wgd", str(acfg["loh_frac_wgd"]),
+               "--min-purity", str(acfg["min_purity"]),
+               "--ploidy-wgd", str(acfg["ploidy_wgd"])]
+        log.append(f"## cohort {cid}\n$ {' '.join(cmd)}\n")
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=3600)
+        except subprocess.TimeoutExpired:
+            log.append("## TIMEOUT after 3600s")
+            (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
+                                                     encoding="utf-8")
+            return False, f"FACETS pipeline timed out for {cid}"
+        log.append((r.stdout or "") + (r.stderr or ""))
+        if r.returncode != 0:
+            (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
+                                                     encoding="utf-8")
+            return False, (f"FACETS pipeline failed for {cid} (rc="
+                           f"{r.returncode}) — see "
+                           f"{tdir / 'ABS_r_pipeline.log'}")
+    (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
+                                             encoding="utf-8")
+    return True, f"ran FACETS on {len(missing)} cohort(s) ({manifest})"
 
 
 # ---------------------------------------------------------------------------
@@ -434,15 +541,20 @@ def run_module_abs(cfg: dict[str, Any],
                     cn_tests=empty, purity_peaks=empty, summary=empty,
                     skipped=msg)
 
-    if acfg["tool"] != "facets":
-        return skip(f"unknown tool: {acfg['tool']!r}")
+    if acfg["tool"] not in ("ascat", "facets"):
+        return skip(f"unknown tool: {acfg['tool']!r} (supported: ascat; "
+                    "facets reserved for count-based sequencing input)")
 
     cn_tables, seg_tables, missing = _load_abs_tables(cfg, data, acfg)
     if missing:
-        return skip("absolute CN tables missing for " + ", ".join(missing)
-                    + " — run FACETS (Phase 2 pipeline) or place harmonized "
-                    "absolute_cn_<cid>.tsv / absolute_seg_<cid>.tsv tables "
-                    "(see docs/plan_absolute_cn.md)")
+        ok, msg = _run_r_pipeline(cfg, acfg, missing)
+        if not ok:
+            return skip(msg)
+        print(f"  [ABS] R/FACETS pipeline: {msg}")
+        cn_tables, seg_tables, missing = _load_abs_tables(cfg, data, acfg)
+        if missing:
+            return skip("pipeline ran but tables still missing for "
+                        + ", ".join(missing))
 
     bands, _ = _load_bands(cfg, rcfg, data)
     if bands.empty:

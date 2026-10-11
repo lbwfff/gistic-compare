@@ -1,4 +1,5 @@
-"""Tests for module ABS (absolute copy-number comparisons, table mode)."""
+"""Tests for module ABS (absolute copy-number comparisons; table mode +
+Phase 2 R/ASCAT pipeline mode)."""
 
 from __future__ import annotations
 
@@ -6,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from synth_absolute import synth_absolute_tables  # noqa: E402
@@ -115,3 +117,80 @@ def test_abs_low_purity_sensitivity(pairwise_config, tmp_path):
     summary = pd.read_csv(tables / "ABS_summary.tsv", sep="\t")
     assert summary["n_low_purity"].iloc[0] >= 0
     assert not cn_a.empty
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: R/ASCAT pipeline mode (skipif no Rscript/ASCAT)
+# ---------------------------------------------------------------------------
+
+def _has_ascat() -> bool:
+    import shutil
+    import subprocess
+    rs = shutil.which("Rscript")
+    if rs is None:
+        return False
+    try:
+        r = subprocess.run(
+            [rs, "-e", 'cat(requireNamespace("ASCAT", quietly=TRUE))'],
+            capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "TRUE" in r.stdout
+
+
+@pytest.mark.skipif(not _has_ascat(), reason="Rscript/ASCAT unavailable")
+def test_abs_r_pipeline_end_to_end(pairwise_config, tmp_path):
+    """ASCAT on synthetic marker-level logR/BAF -> harmonized tables ->
+    comparison suite (full pipeline mode, Python subprocess -> R)."""
+    import yaml
+
+    from synth_absolute import synth_ascat_inputs
+    synth_root = pairwise_config.parent
+    raw = synth_root / "raw_snp6"
+    ma = synth_ascat_inputs(raw, "a", n_samples=4, wgd=True, purity=0.80,
+                            seed=31, sample_names=[f"A{i}"
+                                                   for i in range(1, 9)])
+    mb = synth_ascat_inputs(raw, "b", n_samples=4, wgd=False, purity=0.60,
+                            seed=32, sample_names=[f"B{i}"
+                                                   for i in range(1, 9)])
+    manifest = pd.concat([ma, mb], ignore_index=True)
+    manifest.to_csv(raw / "manifest.tsv", sep="\t", index=False)
+
+    cfg = yaml.safe_load(open(pairwise_config))
+    cfg.setdefault("analysis", {})["absolute_cn"] = {
+        "tool": "ascat", "raw_dir": "raw_snp6", "manifest": "manifest.tsv"}
+    path = pairwise_config.parent / "config_abs_r.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+
+    from gistic_compare.cli import main
+    out = tmp_path / "out_abs_r"
+    assert main(["--config", str(path), "--modules", "ABS",
+                 "--outdir", str(out), "--skip-figures"]) == 0
+    tables = out / "test_pair" / "tables"
+    assert not (tables / "ABS_skipped.txt").exists()
+
+    # the R wrapper emitted the harmonized tables into the cohort dirs
+    assert (synth_root / "A" / "absolute_cn_a.tsv").exists()
+    assert (synth_root / "B" / "absolute_seg_b.tsv").exists()
+
+    cn = pd.read_csv(synth_root / "A" / "absolute_cn_a.tsv", sep="\t")
+    for col in ("sample", "purity", "ploidy_abs", "wgd_status", "wgd_frac",
+                "loh_frac", "cnloh_frac", "n_segments_allelic",
+                "flag_low_purity", "wgd_flag_b", "wgd_disagreement"):
+        assert col in cn.columns, col
+    # truth: WGD+ cohort with strong duplication signature
+    assert (cn["fit_ok"] == 1).all()
+    assert (cn["wgd_frac"] > 0.3).all()
+    assert (cn["ploidy_abs"] > 2.5).all()
+    seg = pd.read_csv(synth_root / "B" / "absolute_seg_b.tsv", sep="\t")
+    assert (seg["cn_minor"] <= seg["cn_total"]).all()
+
+    wgd = pd.read_csv(tables / "ABS_wgd.tsv", sep="\t")
+    r = wgd[wgd["comparison"] == "a_vs_b"].iloc[0]
+    assert r["wgd_frac_a"] > r["wgd_frac_b"]
+    assert r["odds_ratio"] > 1
+
+    metrics = pd.read_csv(tables / "ABS_purity_ploidy.tsv", sep="\t")
+    for metric in ("purity", "ploidy_abs"):
+        rr = metrics[metrics["metric"] == metric].iloc[0]
+        assert rr["cohort_higher"] == "a"
