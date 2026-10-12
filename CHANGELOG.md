@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Modules P9/P11 (pairwise) — CNV landscape figures**:
+  - **P9 arm / chromosome event-frequency figures** (`P9_arm_events`,
+    `P9_chrom_events`): per cohort, the fraction of samples carrying each
+    arm / chromosome broad event, Amplifications above and Deletions below
+    the baseline, the two cohorts side by side (dark = cohort A, light =
+    cohort B), alternating chromosome shading, and a green marker for a
+    cohort difference (two-sided Fisher per unit, BH-FDR within each level
+    and direction).  New table `P9_event_freq.tsv`.
+  - **Module P11 — genome-wide focal q-value landscape**
+    (`P11_focal_landscape`): each cohort's `scores.gistic` ``-log10(q)``
+    track over the whole genome, Amplifications above / Deletions below a
+    `q` threshold line, with a **non-linear** (symlog, linear to q=1e-5)
+    axis so a single extreme deletion cannot squash the near-threshold
+    peaks, equal-height panels, peak genes annotated (protein-coding
+    preferred), and the lighter cohort filled.  Descriptive overlay only —
+    q-values are within-cohort, so no between-cohort test.  New table
+    `P11_focal_peaks.tsv`.
 - **Module ABS (pairwise) — absolute copy-number comparisons (Phase 1,
   table mode)**: reads harmonized FACETS-output tables per cohort
   (`absolute_cn_<cid>.tsv`, `absolute_seg_<cid>.tsv`) and runs the full

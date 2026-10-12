@@ -26,6 +26,7 @@ from . import (  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402
     pairwise_burden,
     pairwise_calls,
     pairwise_diag,
+    pairwise_focal,
     pairwise_marker,
     pairwise_model,
     pairwise_multivariate,
@@ -75,6 +76,8 @@ PAIRWISE_MODULES = {
            pairwise_burden.run_module_p9, plotting.figures_p9),
     "P10": ("burden-controlled permutation on peaks",
             pairwise_permutation.run_module_p10, plotting.figures_p10),
+    "P11": ("focal q-value landscape", pairwise_focal.run_module_p11,
+            plotting.figures_p11),
     "PQ": ("p-value QC (Q-Q + inflation)", pval_qc.run_module_pq,
            plotting.figures_pq),
     "PD": ("baseline/batch diagnostic (lambda inflation)",
@@ -101,7 +104,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--workflow", choices=["benchmark", "pairwise"],
                     default=None,
                     help="override the workflow from the config "
-                         "(benchmark: A-G vs control; pairwise: P1-P5)")
+                         "(benchmark: A-G vs control; pairwise: P1-P11)")
     ap.add_argument("--modules", default=None,
                     help="comma-separated module IDs (default: all)")
     ap.add_argument("--all", action="store_true", help="run all modules "

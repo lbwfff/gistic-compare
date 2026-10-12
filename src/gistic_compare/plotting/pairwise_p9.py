@@ -5,6 +5,8 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 from ..pairwise_burden import METRICS
 from ._core import *  # noqa: F401,F403
@@ -173,10 +175,160 @@ def plot_p9_sensitivity(sens: pd.DataFrame, verdict: pd.DataFrame, cfg
     save(fig, cfg, "P9_sensitivity")
 
 
+def _nice_step(span: float, target: int = 4) -> float:
+    """A "nice" axis step (1/2/2.5/5/10 x 10**k) covering ``span`` in ~target."""
+    import math
+
+    span = abs(float(span))
+    if not np.isfinite(span) or span <= 0:
+        return 0.1
+    mag = 10.0 ** math.floor(math.log10(span / target))
+    for m in (1.0, 2.0, 5.0, 10.0):
+        if m * mag >= span / target:
+            return m * mag
+    return 10.0 * mag
+
+
+def plot_p9_events(freq: pd.DataFrame, cfg, level: str) -> None:
+    """Cohort-level arm- or chromosome-event frequency, mirrored around zero.
+
+    For each unit (arm / chromosome) an up (Amp) and a down (Del) pair of
+    bars is drawn; the two cohorts are the two members of each pair and are
+    told apart by colour lightness (dark = cohort A, light = cohort B) while
+    the hue keeps the global Amp = vermillion / Del = blue convention.  A
+    green marker at the baseline flags a cohort difference (two-sided Fisher
+    across the unit, BH-FDR below the configured threshold; upper = Amp,
+    lower = Del).  One figure per comparison.
+
+    ``level`` is ``"arm"`` or ``"chrom"``.
+    """
+    if freq is None or freq.empty or "level" not in freq.columns:
+        return
+    d = freq[freq["level"] == level]
+    if d.empty:
+        return
+    style(cfg)
+    amp_dark = theme.OKABE["vermillion"]
+    del_dark = theme.OKABE["blue"]
+    amp_light = _blend(amp_dark, 0.55)
+    del_light = _blend(del_dark, 0.55)
+    sig_color = theme.OKABE["bluish_green"]
+    rcfg = ((cfg.get("analysis") or {}).get("regional") or {})
+    fdr_thr = float(rcfg.get("fdr", 0.05))
+
+    comps = list(dict.fromkeys(d["comparison"]))
+    for comp in comps:
+        sub = d[d["comparison"] == comp]
+        units = [str(u) for u in dict.fromkeys(sub["unit"])]
+        n = len(units)
+        if n == 0:
+            continue
+        uchrom = (sub.drop_duplicates("unit")
+                     .set_index("unit")["chrom"].to_dict())
+        val: dict[tuple[str, str], tuple[float, float, bool]] = {}
+        for r in sub.itertuples():
+            fa = float(r.freq_a) if np.isfinite(r.freq_a) else 0.0
+            fb = float(r.freq_b) if np.isfinite(r.freq_b) else 0.0
+            val[(str(r.unit), str(r.direction))] = (fa, fb, bool(r.sig))
+        la, lb, _, _ = _sides(cfg, comp)
+
+        fig, ax = plt.subplots(figsize=theme.figsize(cfg, panel_h=3.0,
+                                                     total_w=7.0))
+        x = np.arange(n)
+        w, off = 0.34, 0.18
+        maxf = 0.0
+        for i, u in enumerate(units):
+            fa, fb, _ = val.get((u, "Amp"), (0.0, 0.0, False))
+            da, db, _ = val.get((u, "Del"), (0.0, 0.0, False))
+            maxf = max(maxf, fa, fb, da, db)
+            ax.bar(i - off, fa, width=w, color=amp_dark, edgecolor="white",
+                   linewidth=0.3, zorder=3)
+            ax.bar(i + off, fb, width=w, color=amp_light, edgecolor="white",
+                   linewidth=0.3, zorder=3)
+            ax.bar(i - off, -da, width=w, color=del_dark, edgecolor="white",
+                   linewidth=0.3, zorder=3)
+            ax.bar(i + off, -db, width=w, color=del_light, edgecolor="white",
+                   linewidth=0.3, zorder=3)
+
+        # alternating chromosome shading
+        groups: list[tuple[int, int]] = []
+        start, prev = 0, uchrom.get(units[0])
+        for i, u in enumerate(units):
+            c = uchrom.get(u)
+            if c != prev:
+                groups.append((start, i - 1))
+                start, prev = i, c
+        groups.append((start, n - 1))
+        for gi, (s, e) in enumerate(groups):
+            if gi % 2 == 0:
+                ax.axvspan(s - 0.5, e + 0.5, color="#F0F0F0", zorder=0)
+
+        ax.axhline(0, color="#555555", lw=0.7, zorder=4)
+        L = max(0.1, maxf * 1.12)
+        ax.set_ylim(-L, L)
+        step = _nice_step(L)
+        tick_vals = np.arange(0.0, L + step / 2, step)
+        ax.set_yticks(list(tick_vals) + list(-tick_vals))
+
+        # cohort-difference markers (baseline: upper = Amp, lower = Del)
+        eps = 0.03 * L
+        for i, u in enumerate(units):
+            if val.get((u, "Amp"), (0, 0, False))[2]:
+                ax.plot(i, eps, marker="o", ms=3.2, color=sig_color,
+                        markeredgecolor="white", markeredgewidth=0.4,
+                        zorder=6)
+            if val.get((u, "Del"), (0, 0, False))[2]:
+                ax.plot(i, -eps, marker="o", ms=3.2, color=sig_color,
+                        markeredgecolor="white", markeredgewidth=0.4,
+                        zorder=6)
+
+        ax.set_xticks(x)
+        labels = [u.replace("chr", "") if level == "chrom" else u
+                  for u in units]
+        ax.set_xticklabels(labels, fontsize=4.6)
+        ax.set_xlim(-0.6, n - 0.4)
+        ax.set_ylabel("frequency", fontsize=7)
+        ax.set_xlabel("chromosome" if level == "chrom" else "chromosome arm",
+                      fontsize=7)
+        ax.yaxis.set_major_formatter(FuncFormatter(
+            lambda v, _: f"{abs(v):.2f}"))
+        ax.tick_params(axis="y", labelsize=6)
+        ax.grid(axis="y", alpha=0.15, zorder=0)
+        ax.set_axisbelow(True)
+
+        handles = [
+            Patch(facecolor=amp_dark, edgecolor="white",
+                  label=f"Amp \u2014 {la}"),
+            Patch(facecolor=amp_light, edgecolor="white",
+                  label=f"Amp \u2014 {lb}"),
+            Patch(facecolor=del_dark, edgecolor="white",
+                  label=f"Del \u2014 {la}"),
+            Patch(facecolor=del_light, edgecolor="white",
+                  label=f"Del \u2014 {lb}"),
+            Line2D([], [], marker="o", ls="", color=sig_color,
+                   markeredgecolor="white", markeredgewidth=0.4,
+                   label=f"cohort difference FDR < {fdr_thr:g}"),
+        ]
+        ax.legend(handles=handles, loc="upper center",
+                  bbox_to_anchor=(0.5, -0.16), ncol=5, fontsize=6,
+                  frameon=False, handlelength=1.0, columnspacing=1.0,
+                  handletextpad=0.4)
+        n_amp = int((sub[sub["direction"] == "Amp"]["sig"]).sum())
+        n_del = int((sub[sub["direction"] == "Del"]["sig"]).sum())
+        fig.suptitle(f"{comp}: {level}-level event frequency  "
+                     f"(cohort-difference FDR<{fdr_thr:g}: "
+                     f"amp n={n_amp}, del n={n_del})", fontsize=8)
+        theme.finalize(fig, "tight")
+        save(fig, cfg, f"P9_{level}_events"
+             if len(comps) == 1 else f"P9_{level}_events_{comp}")
+
+
 def figures_p9(res: dict, cfg) -> None:
     plot_p9_dists(res.get("scores"), res.get("tests"), cfg)
     plot_p9_forest(res.get("tests"), cfg)
     plot_p9_decomposition(res.get("scores"), res.get("tests"), cfg)
+    plot_p9_events(res.get("events"), cfg, "arm")
+    plot_p9_events(res.get("events"), cfg, "chrom")
     if res.get("sensitivity") is not None:
         plot_p9_sensitivity(res.get("sensitivity"),
                             res.get("sensitivity_verdict"), cfg)

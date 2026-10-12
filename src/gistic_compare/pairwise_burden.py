@@ -65,7 +65,7 @@ from .config import CHROMS, out_table
 from .pairwise_amplitude import _matrix_source
 from .pairwise_arm import _arm_intervals
 from .pairwise_model import _load_metadata
-from .pairwise_regional import _regional_cfg
+from .pairwise_regional import _fdr, _fisher_p, _regional_cfg
 
 
 def _burden_cfg(cfg: dict[str, Any]) -> dict:
@@ -408,9 +408,14 @@ METRICS = [
 
 def _cohort_scores(cfg: dict[str, Any], data: dict[str, dict],
                    arms: pd.DataFrame, bcfg: dict, src: str, rcfg: dict,
-                   segs_pre: dict | None = None, verbose: bool = True
-                   ) -> pd.DataFrame:
-    """Per-sample raw burden metrics for every cohort (no ranking)."""
+                   segs_pre: dict | None = None, verbose: bool = True,
+                   events_out: dict | None = None) -> pd.DataFrame:
+    """Per-sample raw burden metrics for every cohort (no ranking).
+
+    When ``events_out`` is given, the per-cohort arm events (all arms, before
+    chromosome merging) and chromosome events are stored in it — the raw
+    material for the cohort-level event-frequency figures.
+    """
     score_frames = []
     segs_cache = dict(segs_pre or {})
     for cid, d in data.items():
@@ -420,6 +425,8 @@ def _cohort_scores(cfg: dict[str, Any], data: dict[str, dict],
         arm_ev["cohort"] = cid
         arm_out, chrom_ev = _merge_chromosome_events(
             arm_ev, bcfg["arm_match_diff"])
+        if events_out is not None:
+            events_out[cid] = dict(arm=arm_ev.copy(), chrom=chrom_ev.copy())
         broad_spans = [dict(sample=r["sample"], chrom=r["chrom"],
                             direction=r["direction"], start=r["start"],
                             end=r["end"])
@@ -633,6 +640,70 @@ def run_sensitivity(cfg: dict[str, Any], data: dict[str, dict],
     return sens, pd.DataFrame(verdict_rows)
 
 
+def _event_freq_table(cfg: dict[str, Any], data: dict[str, dict],
+                      events_by_cohort: dict, arms: pd.DataFrame,
+                      fdr_thr: float) -> pd.DataFrame:
+    """Cohort-level frequency of arm / chromosome events.
+
+    For every comparison x level (arm, chromosome) x direction (Amp, Del) x
+    unit: the alteration frequency in each cohort, the delta (A - B), a
+    two-sided Fisher exact p, and the BH-FDR across units **within that
+    level and direction** (the same per-comparison convention as P4/P6).
+    Arm frequencies count every arm event (before chromosome merging, which
+    is a burden-accounting step only); chromosome frequencies count merged
+    chromosome events.
+    """
+    n_samples = {cid: int(data[cid]["seg"]["sample"].nunique())
+                 for cid in cfg["cohorts"]}
+    arm_chrom = arms.set_index("arm")["chrom"].to_dict()
+    units_by_level = {
+        "arm": ("arm", [str(a) for a in arms["arm"]]),
+        "chrom": ("chrom", [str(c) for c in CHROMS]),
+    }
+
+    def _n_altered(events: pd.DataFrame | None, unit: str,
+                   direction: str, col: str) -> int:
+        if events is None or len(events) == 0 or col not in events.columns:
+            return 0
+        sub = events[(events["direction"] == direction)
+                     & (events[col].astype(str) == unit)]
+        return int(sub["sample"].nunique())
+
+    rows = []
+    for cmp_ in cfg["comparisons"]:
+        ca, cb = cmp_["a"], cmp_["b"]
+        comp = f"{ca}_vs_{cb}"
+        kind = cmp_.get("kind", "unpaired")
+        na, nb = n_samples.get(ca, 0), n_samples.get(cb, 0)
+        for level, (col, units) in units_by_level.items():
+            for direction in ("Amp", "Del"):
+                these = []
+                for unit in units:
+                    ev_a = (events_by_cohort.get(ca, {}) or {}).get(level)
+                    ev_b = (events_by_cohort.get(cb, {}) or {}).get(level)
+                    ka = _n_altered(ev_a, unit, direction, col)
+                    kb = _n_altered(ev_b, unit, direction, col)
+                    freq_a = ka / na if na else np.nan
+                    freq_b = kb / nb if nb else np.nan
+                    these.append(dict(
+                        comparison=comp, kind=kind, level=level,
+                        unit=str(unit),
+                        chrom=(str(arm_chrom.get(unit, ""))
+                               if level == "arm" else str(unit)),
+                        direction=direction,
+                        n_a=na, n_b=nb, n_altered_a=ka, n_altered_b=kb,
+                        freq_a=freq_a, freq_b=freq_b,
+                        delta_freq=freq_a - freq_b,
+                        p=_fisher_p(ka, na, kb, nb)))
+                df = pd.DataFrame(these)
+                df["fdr"] = _fdr(df["p"].to_numpy(float))
+                df["sig"] = df["fdr"] < fdr_thr
+                rows.append(df)
+    if not rows:
+        return pd.DataFrame()
+    return pd.concat(rows, ignore_index=True)
+
+
 def run_module_p9(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     rcfg = _regional_cfg(cfg)
     bcfg = _burden_cfg(cfg)
@@ -648,12 +719,17 @@ def run_module_p9(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
               "— focal events from tumors.seg (coarser resolution)")
 
     # ---- per-cohort per-sample scores ----
-    scores = _cohort_scores(cfg, data, arms, bcfg, src, rcfg)
+    events_by_cohort: dict = {}
+    scores = _cohort_scores(cfg, data, arms, bcfg, src, rcfg,
+                            events_out=events_by_cohort)
     source_by_cohort = {cid: src for cid in cfg["cohorts"]}
 
     # ---- rank normalization + tests ----
     meta_df = _load_metadata(cfg)
     scores, tests = _rank_and_test(cfg, scores, meta_df)
+
+    # ---- cohort-level arm / chromosome event frequencies ----
+    events = _event_freq_table(cfg, data, events_by_cohort, arms, rcfg["fdr"])
 
     # ---- cross-checks: S vs wGII vs FGA ----
     cross_rows = []
@@ -696,6 +772,18 @@ def run_module_p9(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     tests.to_csv(out_table(cfg, "P9_burden_tests.tsv"), sep="\t", index=False)
     cross.to_csv(out_table(cfg, "P9_crosscheck.tsv"), sep="\t", index=False)
     summary.to_csv(out_table(cfg, "P9_summary.tsv"), sep="\t", index=False)
+    if not events.empty:
+        events.to_csv(out_table(cfg, "P9_event_freq.tsv"), sep="\t",
+                      index=False)
+
+    if not events.empty:
+        for level in ("arm", "chrom"):
+            ll = events[events["level"] == level]
+            if ll.empty:
+                continue
+            n_sig = int(ll["sig"].sum())
+            print(f"  [P9] {level}-level events: {len(ll)} unit x direction "
+                  f"tests, {n_sig} with cohort difference FDR<{rcfg['fdr']}")
 
     if not tests.empty:
         st = tests[tests["metric"] == "S_total"]
@@ -719,7 +807,7 @@ def run_module_p9(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
         res_extra = dict(sensitivity=sens, sensitivity_verdict=verdict)
 
     return dict(scores=scores, tests=tests, crosscheck=cross, summary=summary,
-                source=src, bcfg=bcfg, **res_extra)
+                source=src, bcfg=bcfg, events=events, **res_extra)
 
 
 def _load_bands(cfg: dict[str, Any], rcfg: dict, data: dict[str, dict]):

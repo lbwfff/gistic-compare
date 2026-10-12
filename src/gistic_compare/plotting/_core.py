@@ -34,6 +34,19 @@ def _pc(ptype: str) -> str:
     return theme.ptype_color(ptype)
 
 
+def _blend(hex_color: str, f: float = 0.5, other: str = "#FFFFFF") -> str:
+    """Linear blend of ``hex_color`` towards ``other`` by fraction ``f``.
+
+    Used to derive a lighter cohort shade from a fixed direction hue (Amp /
+    Del) without leaving the Okabe-Ito palette.
+    """
+    r1, g1, b1 = theme._rgb(hex_color)
+    r2, g2, b2 = theme._rgb(other)
+    vals = [round((c1 * (1 - f) + c2 * f) * 255)
+            for c1, c2 in ((r1, r2), (g1, g2), (b1, b2))]
+    return "#{:02X}{:02X}{:02X}".format(*vals)
+
+
 def _sides(cfg: dict[str, Any], comparison: str):
     """(label_a, label_b, colour_a, colour_b) for a comparison id."""
     return theme.side_meta(cfg, comparison)
@@ -302,6 +315,7 @@ __all__ = [
     "NullFormatter",
     "Path",
     "_annotate_labeled_points",
+    "_blend",
     "_chrom_bounds",
     "_clean_label",
     "_draw_chrom_guides",

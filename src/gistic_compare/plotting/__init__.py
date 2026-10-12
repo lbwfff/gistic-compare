@@ -47,6 +47,8 @@ from .pairwise_p9 import *  # noqa: F401,F403
 from .pairwise_p9 import figures_p9  # noqa: F401
 from .pairwise_p10 import *  # noqa: F401,F403
 from .pairwise_p10 import figures_p10  # noqa: F401
+from .pairwise_p11 import *  # noqa: F401,F403
+from .pairwise_p11 import figures_p11  # noqa: F401
 from .pairwise_pd import *  # noqa: F401,F403
 from .pairwise_pd import figures_pd  # noqa: F401
 from .pval_qc import *  # noqa: F401,F403

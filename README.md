@@ -102,7 +102,7 @@ and *"which signals are specific to my experiment?"*.
 | F | experiment-specific signal fraction (vs control), 4 weightings |
 | G | benchmark against a **reference panel** (numbers externalized to `presets/reference_panels/*.yaml`; disabled unless configured) |
 
-### pairwise (modules P1–P10, PQ, PD, CF, GS, ABS) — cohort vs cohort, no control
+### pairwise (modules P1–P11, PQ, PD, CF, GS, ABS) — cohort vs cohort, no control
 
 | ID | question | basis |
 |---|---|---|
@@ -116,6 +116,7 @@ and *"which signals are specific to my experiment?"*.
 | **P8** | are the cohorts separable **as a whole**, and which loci drive it? (PERMANOVA + permutation, CV-AUC elastic-net, stability selection) | window/peak feature matrix |
 | **P9** | is one cohort globally **more rearranged** — and at which scale (focal vs broad)? (three-level SCNA burden score + wGII) | `tumors.seg` + `D.cap1.5.mat` (or seg fallback) |
 | **P10** | which peaks survive once the **global burden** is controlled? (margin-preserving permutation, naive-vs-permutation inflation) | all_lesions `- CN values` rows |
+| **P11** | what does the **focal landscape** look like genome-wide? (per-cohort `-log10(q)` from `scores.gistic`, Amp up / Del down, peak genes annotated; descriptive overlay, no between-cohort test) | `scores.gistic` + `amp/del_genes.conf_90.txt` |
 | **PQ** | are the p-value sets healthy? (Q-Q plots + genomic inflation λ for every scan) | saved tables of the same run |
 | **PD** | **why** is lambda inflated — and what survives baseline removal? (per-sample baseline check, shift-structure track, centering sensitivity with trust layers) | `tumors.seg` |
 | **ABS** | **absolute-copy-number extension** (optional): WGD frequency (Fisher+OR), purity/absolute-ploidy/LOH/CN-LOH (MW), P9's three-level burden in CN space, purity-adjusted per-peak logistic | ASCAT on marker-level logR/BAF (`R/absolute_cn.R`, needs raw data — auto-skips without it) |
@@ -127,7 +128,9 @@ peak in some cohort to enter them. **P4–P7 answer group difference** and do no
 depend on peak calling at all (P7's peak layer is the exception). P8 is a global
 multivariate summary, **P9 the burden background** every per-locus result
 should be read against, **P10 the burden-controlled peak test**, and **PQ/PD
-the quality gates** (inflation, batch/baseline diagnostics). See `docs/` for
+the quality gates** (inflation, batch/baseline diagnostics); **P11** is the
+descriptive scan-level **focal q-value landscape** (amplifications and
+deletions mirrored genome-wide) — an overlay, not a test. See `docs/` for
 statistical caveats (per-window FDR is exploratory; the pre-specified cytoband
 tests and preset loci are the confirmatory tier; P8 separability is not
 evidence of biology).
