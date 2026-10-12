@@ -125,6 +125,11 @@ analysis:
   #   #                  [, germline_logr, germline_baf   (matched normal)
   #   #                   | het_calls]                    (Birdseed AA/AB/BB;
   #   #                    tumour-only het proxy — paths vs manifest)
+  #   gc_file: ref/GC_AffySNP6_102015.txt.gz   # SNP6 GC correction (Zenodo
+  #                                            # 14008443) — required for
+  #                                            # HAPMAP-normalised logR
+  #   jobs: 4                          # parallel R workers per cohort
+  #   r_timeout_min_per_sample: 90     # per-worker subprocess budget
   #   cn_thr_wgd: 3.0              # WGD heuristic A total-CN threshold
   #   loh_frac_wgd: 0.30           # heuristic A genome fraction (sens 0.2-0.5)
   #   min_purity: 0.30             # R05 4.5 low-purity flag

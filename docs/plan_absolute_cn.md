@@ -87,13 +87,28 @@ absolute_cn:
 `absolute_cn_<cohort>.tsv`：
 
 ```
-sample, purity, ploidy_abs, wgd_status(0/1/2+), wgd_frac,
-loh_frac, cnloh_frac, n_segments_allelic, flag_low_purity
+sample, purity, ploidy_abs, wgd_status(0/1), wgd_frac,
+loh_frac, cnloh_frac, n_segments_allelic, flag_low_purity,
+wgd_flag_b, wgd_disagreement, non_aberrant, germline_mode,
+het_source, fit_ok, note
 ```
 
-内部流程：读基因型+BAF/logR → FACETS `procSample` → purity/ploidy/
-等位基因特异性分段 → WGD 启发式（§5）→ 写表。逐样本失败允许（写 flag
-而非中断）；日志记录每样本的 FACETS `diplogR`/模型选择。
+配套 `absolute_seg_<cohort>.tsv`（等位基因分段：sample, chrom, start,
+end, cn_total, cn_major, cn_minor）。
+
+内部流程：manifest 的 per-sample logR/BAF（+ het_calls 或 germline）→
+组装 ASCAT 宽表（**rownames = 探针名**，探针名网格由 prepare 脚本的
+`markers.tsv.gz` 提供）→ `ascat.loadData` → **`ascat.correctLogR`
+（SNP6 GC 校正，`--gc-file`；标准步骤，缺省时网格搜索达不到 GoF
+阈值——CUE/CHB pilot 实测）** → `ascat.aspcf(penalty, seed)`（het 集
+合经 `ascat.gg` 传入）→ `ascat.runAscat(gamma)` → WGD 启发式（§5）→
+写表。逐样本失败允许（fit_ok=0 行而非中断）；Python 侧按 manifest
+分块并行（`jobs` 个 worker，块 manifest 写在原 manifest 同目录）。
+
+工具链前提（prepare 脚本 `scripts/prepare_abs_inputs.py`）：CEL →
+apt-probeset-genotype（birdseed 模型）→ `birdseed.calls.txt`（基因型
+调用，-1=NN/0=AA/1=AB/2=BB）+ `<cohort>.lrr_baf.txt`（宽表 LRR/BAF，
+含 HapMap 参照板列——被剔除，其作用已内化于 logR）。
 
 ### 4.4 Python 比较统计（模块 ABS 的后半段）
 
@@ -143,19 +158,24 @@ FACETS 不直接输出 WGD 标签，按等位基因定义实现（手册 §4.6 �
 
 ## 8. 实施检查清单
 
-- [ ] **数据**：下载/整理两队列的基因型+BAF（或 CEL），建 manifest
-- [ ] **数据**：确认是否有匹配 normal（决定 tumor-normal vs pooled-normal / tumor-only）
+- [x] **数据**：下载两队列的 Birdseed 基因型调用 + LRR/BAF 宽表
+      （`scripts/prepare_abs_inputs.py` 切分为 per-sample 文件 + manifest；
+      CUE 136 / CHB 90，与 GISTIC 队列规模精确一致）
+- [ ] **数据**：确认是否有匹配 normal（无 → tumor-only + 样本自身
+      Birdseed het 代理，已实现；如队列含 normal 可做 pooled 对照）
 - [x] **环境**：R ≥ 4.x + ASCAT 安装验证（VanLoo-lab/ascat 3.2.0；其
       未使用的 `copynumber` Import 已移除后安装——该包只出现在注释中）
 - [x] 实现 `R/absolute_cn.R`（契约见 §4.3；ASCAT 3.2 API：
-      `ascat.loadData` → `ascat.aspcf(penalty, seed)` → `ascat.runAscat(gamma)`）
-- [x] 实现 `pairwise_absolute.py`（ABS 模块：R 包装 + 比较统计）
+      `ascat.loadData` → `ascat.correctLogR(GC)` →
+      `ascat.aspcf(penalty, seed, ascat.gg)` → `ascat.runAscat(gamma)`）
+- [x] 实现 `pairwise_absolute.py`（ABS 模块：R 包装 + 比较统计 +
+      manifest 分块并行）
 - [x] 绘图 `plotting/pairwise_abs.py`
 - [x] CLI 注册 + `_skip_reasons` 降级 + config schema
 - [x] 测试：合成比较统计（无 R）+ R 依赖端到端（skipif）
 - [x] 文档：README 双语、CHANGELOG、stats.md 新增 ABS 章节（含 WGD 启发式声明）
-- [ ] 敏感性：`loh_frac_wgd` 0.2/0.3/0.5；启发式 A vs B 对照表（机制已实现
-      `wgd_flag_b`/`wgd_disagreement` 列，阈值敏感性待真实数据）
+- [ ] **全队列运行 + 敏感性**：pilot（4 样本）通过后放开 226 样本；
+      `loh_frac_wgd` 0.2/0.3/0.5、启发式 A vs B 对照（机制已实现）
 
 ## 9. 开放问题
 

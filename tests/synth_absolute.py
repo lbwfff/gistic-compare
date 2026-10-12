@@ -177,6 +177,14 @@ def synth_ascat_inputs(root, cohort: str, n_samples: int = 4,
     pd.DataFrame({"chr": grid["chr"], "pos": grid["pos"],
                   "value": gbaf.round(4)}).to_csv(gbaf_path, sep="\t",
                                                   index=False)
+    # probe-name grid, per cohort dir — the R wrapper resolves it as
+    # <manifest_dir>/<cohort>/markers.tsv.gz (keyed by probe name for the
+    # GC-content reference match)
+    cdir = root / cohort
+    cdir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"name": [f"SNP_A-{1000000 + i}" for i in range(n)],
+                  "chr": grid["chr"], "pos": grid["pos"]}).to_csv(
+        cdir / "markers.tsv.gz", sep="\t", index=False, compression="gzip")
     het_path = None
     if het_calls:
         # birdseed-style genotype calls derived from the germline BAF:

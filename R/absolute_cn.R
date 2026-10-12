@@ -43,10 +43,17 @@
 #   WGD rounds reliably (R05 §4.6 caveat).  wgd_disagreement=1 marks
 #   samples where A and B disagree.
 #
+# GC content reference for logR correction (ASCAT 3 standard SNP6 step;
+# without it the grid search fails to reach the GoF threshold on
+# HAPMAP-normalised logR — verified on the CUE/CHB pilot):
+#   --gc-file GC_AffySNP6_102015.txt   (Zenodo record 14008443; keyed by
+#   probe name — the markers grid carries the probe ids)
+#
 # Usage:
 #   Rscript absolute_cn.R --manifest m.tsv --cohort cue --out-dir /path \
 #     [--cn-thr-wgd 3.0] [--loh-frac-wgd 0.30] [--min-purity 0.30] \
-#     [--ploidy-wgd 3.7] [--penalty 70] [--gamma 0.55] [--seed 42]
+#     [--ploidy-wgd 3.7] [--penalty 70] [--gamma 0.55] [--seed 42] \
+#     [--gc-file <GC_AffySNP6_102015.txt>]
 
 suppressWarnings(suppressMessages(library(ASCAT)))
 
@@ -67,7 +74,10 @@ min_purity <- num("--min-purity", 0.30)
 ploidy_wgd <- num("--ploidy-wgd", 3.7)
 penalty <- num("--penalty", 70)
 gamma <- num("--gamma", 0.55)
+max_ploidy <- num("--max-ploidy", 5.5)
 seed <- as.integer(getarg("--seed", "42"))
+gc_file <- getarg("--gc-file")
+cat(sprintf("[dbg] parsed max_ploidy=%s gamma=%s\n", max_ploidy, gamma))
 
 if (is.null(manifest_path) || is.null(cohort)) {
   stop("usage: --manifest <tsv> --cohort <id> --out-dir <dir> [flags]")
@@ -128,10 +138,24 @@ for (i in seq_along(tumor_logr)) {
 
 work <- file.path(out_dir, "ASCAT_input")
 dir.create(work, recursive = TRUE, showWarnings = FALSE)
+
+# probe-name grid — the ASCAT GC-content reference file is keyed by probe
+# name, so the wide-format matrices must carry real probe ids as rownames
+markers_path <- file.path(dirname(manifest_path), cohort,
+                          "markers.tsv.gz")
+if (!file.exists(markers_path)) {
+  stop("markers grid not found: ", markers_path, " — re-run ",
+       "scripts/prepare_abs_inputs.py")
+}
+markers <- read.delim(markers_path)
+if (nrow(markers) != nrow(grid) || any(markers$chr != grid[[1]]) ||
+    any(markers$pos != grid[[2]])) {
+  stop("markers.tsv.gz grid differs from the per-sample marker grid")
+}
+
 write_wide <- function(frames, path) {
-  marker_ids <- sprintf("M%d", seq_len(nrow(grid)))
   vals <- do.call(cbind, frames)
-  wide <- cbind(marker_ids, grid, vals)
+  wide <- cbind(markers$name, grid, vals)
   names(wide) <- c("", "chrs", "pos", man$sample)
   write.table(wide, path, sep = "\t", quote = FALSE, row.names = FALSE,
               na = "NA")
@@ -179,8 +203,8 @@ if (has_germline) {
              file.path(work, "Germline_BAF.txt"))
   cat(sprintf("[abs] germline matched for all %d sample(s)\n", nrow(man)))
 } else if (has_het) {
-  cat(sprintf("[abs] tumor-only mode: het SNPs from the samples' own ",
-              "Birdseed calls (%d sample(s))\n", nrow(man)))
+  cat(paste0("[abs] tumor-only mode: het SNPs from the samples' own ",
+             "Birdseed calls (", nrow(man), " sample(s))\n"))
 } else {
   cat("[abs] no germline columns and no het_calls -> ASCAT built-in ",
       "tumor-only genotype inference\n")
@@ -192,6 +216,17 @@ ascat.data <- ascat.loadData(
   if (has_germline) file.path(work, "Germline_LogR.txt") else NULL,
   if (has_germline) file.path(work, "Germline_BAF.txt") else NULL,
   chrs = c(1:22))
+
+# GC correction (the standard SNP6 step; without it ASCAT's grid search
+# fails to reach the goodness-of-fit threshold on HAPMAP-normalised
+# HapMap-referenced logR — verified on the CUE/CHB pilot)
+if (!is.null(gc_file) && nzchar(gc_file)) {
+  gc_path <- if (file.exists(gc_file)) normalizePath(gc_file) else
+    resolve(gc_file)
+  if (is.na(gc_path)) stop("GC content file not found: ", gc_file)
+  cat(sprintf("[abs] GC correction: %s\n", basename(gc_path)))
+  ascat.data <- ascat.correctLogR(ascat.data, GCcontentfile = gc_path)
+}
 
 ascat.gg <- NULL
 if (!has_germline && has_het) {
@@ -221,12 +256,16 @@ if (!has_germline && has_het) {
   }
   raw <- do.call(cbind, lapply(calls, function(d)
     tolower(as.character(d[[3]]))))
-  het_mat <- matrix(NA, nrow = nrow(grid), ncol = length(calls),
-                    dimnames = list(sprintf("M%d", seq_len(nrow(grid))),
-                                    man$sample))
+  het_mat <- matrix(TRUE, nrow = nrow(grid), ncol = length(calls),
+                    dimnames = list(markers$name, man$sample))
   het_mat[raw %in% c("ab", "1", "het")] <- FALSE
   het_mat[raw %in% c("aa", "bb", "0", "2", "hom", "homz")] <- TRUE
-  ascat.gg <- list(germlinegenotypes = !het_mat)
+  # ASCAT's contract: germlinegenotypes TRUE = germline homozygous.
+  # Uncalled (NN) markers keep TRUE — excluding them from the het set
+  # and treating them as homozygous stretches, as in the manual ASCAT
+  # SNP-array workflow (NA here would break the hom-stretch logic and
+  # the fit acceptance — verified on the CUE/CHB pilot)
+  ascat.gg <- list(germlinegenotypes = het_mat)
 }
 
 if (has_germline) {
@@ -243,8 +282,52 @@ if (has_germline) {
                             seed = seed, out.dir = tempdir())
 }
 ascat.output <- ascat.runAscat(ascat.data, gamma = gamma,
+                               max_ploidy = max_ploidy,
                                img.dir = tempdir())
 
+# ---------------------------------------------------------------------------
+# fallback: samples that fail the automatic grid search (ASCAT's
+# percentzero / local-minimum filters reject e.g. near-diploid or
+# low-purity samples) are re-fitted at their grid-optimal (rho, psi) —
+# the documented ASCAT manual mode
+# ---------------------------------------------------------------------------
+failed <- unique(as.character(ascat.output$failedarrays))
+auto_ok <- setdiff(names(ascat.output$purity), failed)
+retry <- setdiff(man$sample, auto_ok)
+rho_vec <- rep(NA_real_, nrow(man)); psi_vec <- rep(NA_real_, nrow(man))
+names(rho_vec) <- names(psi_vec) <- man$sample
+manual_note <- NULL
+if (length(retry)) {
+  for (s_name in retry) {
+    lrrsegm = ascat.data$Tumor_LogR_segmented[, s_name]
+    bafsegm = ascat.data$Tumor_BAF_segmented[[s_name]][, , drop = FALSE]
+    if (is.null(bafsegm) || nrow(bafsegm) == 0) next
+    rr = lrrsegm[rownames(bafsegm)]
+    bb = as.numeric(bafsegm)
+    ap = !(ascat.data$SNPpos[rownames(bafsegm), 1] %in% c("X", "Y"))
+    if (!any(ap)) next
+    s_segs = make_segments(rr[ap], bb[ap])
+    dmat = ASCAT:::create_distance_matrix(s_segs, gamma,
+                                          min_ploidy = 1.5,
+                                          max_ploidy = max_ploidy,
+                                          min_purity = 0.1,
+                                          max_purity = 1.05)
+    mind = which(dmat == min(dmat), arr.ind = TRUE)[1, ]
+    rho_vec[s_name] = as.numeric(colnames(dmat)[mind[2]])
+    psi_vec[s_name] = as.numeric(rownames(dmat)[mind[1]])
+    cat(sprintf("[abs] manual fit %s: rho=%.2f psi=%.2f\n", s_name,
+                rho_vec[s_name], psi_vec[s_name]))
+  }
+  if (any(!is.na(rho_vec[retry]))) {
+    ascat.output = ascat.runAscat(ascat.data, gamma = gamma,
+                                  max_ploidy = max_ploidy,
+                                  rho_manual = rho_vec,
+                                  psi_manual = psi_vec,
+                                  img.dir = tempdir())
+    manual_note <- "manual rho/psi fit"
+  }
+}
+note_extra <- if (!is.null(manual_note)) manual_note else ""
 # ---------------------------------------------------------------------------
 # per-sample harmonized metrics + WGD heuristics
 # ---------------------------------------------------------------------------
@@ -289,6 +372,9 @@ for (i in seq_len(nrow(man))) {
   ok <- (s %in% failed) == FALSE && nrow(seg) > 0 &&
     is.finite(purity) && is.finite(ploidy)
   note <- if (s %in% nonaberrant) "non-aberrant" else ""
+  if (s %in% names(rho_vec) && !is.na(rho_vec[s])) {
+    note <- paste(note, "manual-fit")
+  }
   if (s %in% failed) note <- paste(note, "failedarray")
   if (ok) {
     m <- wgd_metrics(seg)

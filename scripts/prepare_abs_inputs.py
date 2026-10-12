@@ -105,13 +105,17 @@ def process_cohort(cid: str, lrr_baf: Path, calls_path: Path,
     handles: dict[tuple[str, str], gzip.GzipFile] = {}
     first_done: set[tuple[str, str]] = set()
 
-    def h(sample: str, kind: str):
-        key = (sample, kind)
+    def h(key: tuple[str, str]):
         if key not in handles:
+            sample, kind = key
             handles[key] = gzip.open(
                 cohort_dir / f"{sample}__{kind}.tsv.gz", "at",
                 compresslevel=1)
         return handles[key]
+
+    markers_h = gzip.open(cohort_dir / "markers.tsv.gz", "at",
+                          compresslevel=1)
+    markers_header_written = False
 
     reader = pd.read_csv(lrr_baf, sep="\t", chunksize=chunksize,
                          dtype={"Name": str, "Chr": str, "Position": "Int64"})
@@ -124,10 +128,24 @@ def process_cohort(cid: str, lrr_baf: Path, calls_path: Path,
             continue
         grid = chunk[["ChrNum", "Position"]]
         joined = calls.reindex(chunk["Name"])
+        # hygiene: birdseed calls exist for some CN/special probes whose
+        # BAF column holds a placeholder (2.0), not an allele fraction —
+        # their "calls" are meaningless and would poison the ASCAT het
+        # set; a marker is only het-eligible when every sample's BAF is a
+        # valid allele fraction (<= 1)
+        baf_block = chunk[[baf_c for _, baf_c in samples.values()]]
+        het_valid = (baf_block <= 1).all(axis=1).to_numpy()
+        # probe-name grid (used by the R wrapper for GC-correction keys)
+        mk = pd.DataFrame({"name": chunk["Name"].to_numpy(),
+                           "chr": grid["ChrNum"].to_numpy(),
+                           "pos": grid["Position"].to_numpy()})
+        mk.to_csv(markers_h, sep="\t", index=False,
+                  header=not markers_header_written)
+        markers_header_written = True
         for sample, (lrr_col, baf_col) in samples.items():
             call_col = call_cols[sample]
             het_vals = joined[call_col].round().astype("Int64")
-            het_vals = het_vals.where(het_vals.isin([0, 1, 2]))  # NN -> NA
+            het_vals = het_vals.where(het_vals.isin([0, 1, 2]) & het_valid)
             values = (
                 ("logr", chunk[lrr_col].to_numpy(dtype="float64")),
                 ("baf", chunk[baf_col].to_numpy(dtype="float64")),
@@ -138,7 +156,7 @@ def process_cohort(cid: str, lrr_baf: Path, calls_path: Path,
                                    "pos": grid["Position"].to_numpy(),
                                    "value": series})
                 header_line = (sample, kind) not in first_done
-                df.to_csv(h(sample, kind), sep="\t", index=False,
+                df.to_csv(h((sample, kind)), sep="\t", index=False,
                           header=header_line, na_rep="")
                 if header_line:
                     first_done.add((sample, kind))
@@ -146,6 +164,7 @@ def process_cohort(cid: str, lrr_baf: Path, calls_path: Path,
 
     for handle in handles.values():
         handle.close()
+    markers_h.close()
 
     for sample in samples:
         manifest_rows.append(dict(

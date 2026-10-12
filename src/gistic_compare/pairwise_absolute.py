@@ -83,6 +83,11 @@ def _abs_cfg(cfg: dict[str, Any], rcfg: dict) -> dict:
         r_script=str(a.get("r_script", _DEFAULT_R_SCRIPT)),
         penalty=float(a.get("penalty", 70)),
         gamma=float(a.get("gamma", 0.55)),
+        max_ploidy=float(a.get("max_ploidy", 5.5)),
+        gc_file=str(a.get("gc_file") or ""),
+        jobs=max(1, int(a.get("jobs", 4))),
+        r_timeout_min_per_sample=float(a.get("r_timeout_min_per_sample",
+                                             90.0)),
         cn_thr_wgd=float(a.get("cn_thr_wgd", 3.0)),
         loh_frac_wgd=float(a.get("loh_frac_wgd", 0.30)),
         min_purity=float(a.get("min_purity", 0.30)),
@@ -233,38 +238,108 @@ def _run_r_pipeline(cfg: dict[str, Any], acfg: dict,
                        "germline_logr, germline_baf | het_calls]) or "
                        "harmonized tables per cohort")
     tdir = Path(cfg["output"]["_tables"])
+    jobs = max(1, int(acfg.get("jobs", 4)))
+    timeout_min = float(acfg.get("r_timeout_min_per_sample", 90.0))
     log: list[str] = []
     for cid in missing:
         c = cfg["cohorts"][cid]
         out_dir = (Path(acfg["tables_dir"]).expanduser()
                    if acfg["tables_dir"] else c["_abs"])
-        cmd = [rscript, str(script), "--manifest", str(manifest),
-               "--cohort", cid, "--out-dir", str(out_dir),
-               "--penalty", str(acfg["penalty"]), "--gamma", str(acfg["gamma"]),
-               "--seed", str(acfg["seed"]),
-               "--cn-thr-wgd", str(acfg["cn_thr_wgd"]),
-               "--loh-frac-wgd", str(acfg["loh_frac_wgd"]),
-               "--min-purity", str(acfg["min_purity"]),
-               "--ploidy-wgd", str(acfg["ploidy_wgd"])]
-        log.append(f"## cohort {cid}\n$ {' '.join(cmd)}\n")
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True,
-                               timeout=3600)
-        except subprocess.TimeoutExpired:
-            log.append("## TIMEOUT after 3600s")
-            (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
-                                                     encoding="utf-8")
-            return False, f"ASCAT pipeline timed out for {cid}"
-        log.append((r.stdout or "") + (r.stderr or ""))
-        if r.returncode != 0:
-            (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
-                                                     encoding="utf-8")
-            return False, (f"ASCAT pipeline failed for {cid} (rc="
-                           f"{r.returncode}) — see "
+        man_all = pd.read_csv(manifest, sep="\t")
+        rows = man_all[man_all["cohort"].astype(str).str.lower()
+                       == cid.lower()]
+        if rows.empty:
+            return False, (f"manifest has no rows for cohort {cid} "
+                           f"({manifest})")
+        # round-robin split into per-worker manifests, written next to the
+        # source manifest so relative paths and the markers grid resolve
+        n_chunks = min(jobs, len(rows))
+        parts = [rows.iloc[i::n_chunks] for i in range(n_chunks)]
+        chunk_dir = out_dir / "ASCAT_chunks"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        log.append(f"## cohort {cid}: {len(rows)} sample(s) on "
+                   f"{len(parts)} worker(s)\n")
+        procs = []
+        for i, part in enumerate(parts, 1):
+            cm = manifest.parent / f"{manifest.stem}__{cid}_chunk{i}.tsv"
+            part.to_csv(cm, sep="\t", index=False)
+            chunk_out = chunk_dir / f"chunk{i}"
+            cmd = [rscript, str(script), "--manifest", str(manifest.parent
+                                                           / cm.name),
+                   "--cohort", cid, "--out-dir", str(chunk_out),
+                   "--penalty", str(acfg["penalty"]),
+                   "--gamma", str(acfg["gamma"]),
+                   "--seed", str(acfg["seed"]),
+                   "--cn-thr-wgd", str(acfg["cn_thr_wgd"]),
+                   "--loh-frac-wgd", str(acfg["loh_frac_wgd"]),
+                   "--min-purity", str(acfg["min_purity"]),
+                   "--ploidy-wgd", str(acfg["ploidy_wgd"]),
+                   "--max-ploidy", str(acfg["max_ploidy"])]
+            if acfg["gc_file"]:
+                gc_p = Path(acfg["gc_file"])
+                if not gc_p.is_absolute():
+                    gc_p = (Path(cfg["_root"]) / gc_p).resolve()
+                cmd += ["--gc-file", str(gc_p)]
+            log.append(f"$ [{' '.join(cm.name.split('_chunk')[-1:])}] "
+                       f"{len(part)} samples: {' '.join(cmd[1:])}\n")
+            timeout = 600.0 + timeout_min * 60.0 * len(part)
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True)
+            procs.append((i, proc, timeout, len(part), chunk_out, cm))
+        # ---- wait for all workers ----
+        failed: list[str] = []
+        cn_parts: list[pd.DataFrame] = []
+        seg_parts: list[pd.DataFrame] = []
+        for i, proc, timeout, n_s, chunk_out, cm in procs:
+            tag = f"worker {i} ({n_s} samples)"
+            try:
+                out, _ = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                out = ""
+                failed.append(f"{tag}: TIMEOUT after {timeout:.0f}s")
+                log.append(f"## {tag}: TIMEOUT\n")
+                continue
+            log.append(f"## {tag} (rc={proc.returncode})\n{out}\n")
+            if proc.returncode != 0:
+                failed.append(f"{tag}: rc={proc.returncode}")
+                continue
+            cn_f = chunk_out / f"absolute_cn_{cid}.tsv"
+            seg_f = chunk_out / f"absolute_seg_{cid}.tsv"
+            if cn_f.exists():
+                cn_parts.append(pd.read_csv(cn_f, sep="\t"))
+            if seg_f.exists():
+                seg_parts.append(pd.read_csv(seg_f, sep="\t"))
+        (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
+                                                 encoding="utf-8")
+        if not cn_parts:
+            return False, (f"ASCAT pipeline failed for {cid} — see "
                            f"{tdir / 'ABS_r_pipeline.log'}")
+        cn = pd.concat(cn_parts, ignore_index=True)
+        cn.to_csv(out_dir / f"absolute_cn_{cid}.tsv", sep="\t", index=False)
+        seg = (pd.concat(seg_parts, ignore_index=True) if seg_parts else
+               pd.DataFrame(columns=["sample", "chrom", "start", "end",
+                                     "cn_total", "cn_major", "cn_minor"]))
+        seg.to_csv(out_dir / f"absolute_seg_{cid}.tsv", sep="\t",
+                   index=False)
+        # clean the per-worker work areas on success
+        shutil.rmtree(chunk_dir, ignore_errors=True)
+        for cm in procs and [p[5] for p in procs]:
+            cm.unlink(missing_ok=True)
+        if failed:
+            log.append(f"## merged with failed workers: {failed}\n")
+            (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
+                                                     encoding="utf-8")
+        n_ok = int((cn["fit_ok"] == 1).sum()) if "fit_ok" in cn else 0
+        print(f"  [ABS] {cid}: {n_ok}/{len(cn)} samples fitted "
+              f"({len(parts)} workers"
+              + (f"; {len(failed)} worker failure(s)" if failed else "")
+              + ")")
     (tdir / "ABS_r_pipeline.log").write_text("\n".join(log),
                                              encoding="utf-8")
-    return True, f"ran ASCAT on {len(missing)} cohort(s) ({manifest})"
+    return True, (f"ran ASCAT on {len(missing)} cohort(s) "
+                  f"({jobs} workers; manifest {manifest})")
 
 
 # ---------------------------------------------------------------------------
