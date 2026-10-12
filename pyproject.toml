@@ -62,7 +62,7 @@ gistic_compare = ["data/refs/*.tsv"]
 [tool.ruff]
 line-length = 88
 target-version = "py310"
-src = ["src", "tests"]
+src = ["src", "tests", "scripts"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
