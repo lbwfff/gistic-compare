@@ -273,6 +273,33 @@ summaries.
   Purity attenuates logR signal, so a cohort effect that survives
   purity adjustment is stronger evidence than the crude OR — the
   covariate only the absolute-CN stage can provide.
+- **WGD multiplicity classes (strict signature)**: per segment the
+  parsimonious whole-genome-doubling evidence is `nMinor >= 2` (both
+  parental copies >= 2 — a single-allele gain cannot produce it);
+  `wgd_class` = 0x (strict signature < `wgd_class_frac` of the
+  genome) / 1x / >=2x (minor >= 3 or total >= 8 fraction >=
+  `wgd_multi_frac`).  The loose heuristic (A above) is reported
+  alongside: its WGD+ rate is inflated by (2,1)-type single-allele
+  gains — in this cohort the two criteria even disagree on DIRECTION
+  (loose: CUE 59% > CHB 50%; strict: CHB 23% > CUE 18% among
+  informative samples).  `qc_tier` marks purity >= 0.99 fits as
+  non-informative (purity/ploidy unidentifiable: flat "likely normal"
+  genomes or balanced-elevated degenerate fits); they are excluded
+  from all class statistics.
+- **HRD genomic-scar scores** (scarHRD, vendored MIT reference
+  implementation, Sztupinszki 2018): HRD-LOH (>=15 Mb LOH segments,
+  whole-chromosome losses excluded), TAI (telomeric allelic
+  imbalance), LST (large-scale transitions, >=10 Mb neighbours <3 Mb
+  apart) and their sum (clinical cutpoint 42, Telli 2016 — derived in
+  HGSOC, not validated in LUAD; use tertiles for stratification).
+  **Purity/segmentation confounding is severe**: HRD-sum correlates
+  with the segmentation count (rho = 0.90) and negatively with purity
+  (rho = -0.60) — low-purity samples' segmentation noise feeds
+  directly into LST/TAI counts.  Compute and interpret on the
+  informative tier with a purity floor (>=0.30) only; the
+  ploidy-adjusted score (`-15.5 x ploidy`) corrects the ploidy axis
+  but not the segmentation-noise axis.  Full-cohort comparison CUE vs
+  CHB: null at every component (MW p = 0.43-0.91).
 - **Low-purity QC** (R05 §4.5): samples with purity < `min_purity`
   (0.30) are flagged; the headline WGD test is re-run without them and
   the delta is recorded in `ABS_summary.tsv`.

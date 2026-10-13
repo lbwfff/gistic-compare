@@ -43,6 +43,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   GC 后 / ASPCF 后，内容键控）与分阶段耗时日志（`[abs][t]`）。
 
 ### Added
+- **ABS — HRD genomic-scar scores via vendored scarHRD** (MIT reference
+  implementation, `R/scarHRD/`): per-sample HRD-LOH / TAI / LST /
+  HRD-sum / ploidy-adjusted score in `ABS_hrd_scores.tsv`
+  (`scripts/run_hrd_scores.py`), plus four distribution figures
+  (density + ECDF per metric).  Confounding documented: HRD-sum ~
+  segmentation count rho = 0.90 and ~ purity rho = -0.60 — interpret on
+  the informative tier with a purity floor; between-cohort comparison
+  null (MW p = 0.43-0.91).
 - **Modules P9/P11 (pairwise) — CNV landscape figures**:
   - **P9 arm / chromosome event-frequency figures** (`P9_arm_events`,
     `P9_chrom_events`): per cohort, the fraction of samples carrying each
@@ -232,6 +240,14 @@ First open-source release. Reorganized from the internal
 `GISTIC_compare` project into a distributable, reusable package.
 
 ### Added
+- **ABS — HRD genomic-scar scores via vendored scarHRD** (MIT reference
+  implementation, `R/scarHRD/`): per-sample HRD-LOH / TAI / LST /
+  HRD-sum / ploidy-adjusted score in `ABS_hrd_scores.tsv`
+  (`scripts/run_hrd_scores.py`), plus four distribution figures
+  (density + ECDF per metric).  Confounding documented: HRD-sum ~
+  segmentation count rho = 0.90 and ~ purity rho = -0.60 — interpret on
+  the informative tier with a purity floor; between-cohort comparison
+  null (MW p = 0.43-0.91).
 - `gistic-compare` console command (and `python -m gistic_compare`) replacing
   the ad-hoc `run_analysis.py`, with `--outdir`, `--list-modules`, and
   module pre-checks (G/P5/GS skip with a reason instead of failing).

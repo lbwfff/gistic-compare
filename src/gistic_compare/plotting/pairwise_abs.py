@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from ..config import out_table
 from ._core import *  # noqa: F401,F403
 
 
@@ -280,9 +281,86 @@ def plot_ploidy_rank(cn_tables: dict, cfg) -> None:
     save(fig, cfg, "ABS_ploidy_rank")
 
 
+_HRD_METRICS = (("HRD_sum", "HRD-sum"), ("HRD_LOH", "HRD-LOH"),
+                ("TAI", "Telomeric AI"), ("LST", "LST"))
+
+
+def plot_hrd_dists(hrd: pd.DataFrame, cfg) -> None:
+    """scarHRD score distributions, CUE vs CHB: density (left) + ECDF
+    (right) per metric.  Informative samples with purity >= 0.30 only —
+    low-purity samples inflate the scores via segmentation noise
+    (HRD_sum ~ n_segments rho = 0.9, ~ purity rho = -0.6 in this cohort).
+    """
+    d = hrd.copy()
+    d["cohort"] = d["cohort"].str.lower()
+    s = d[(d.get("qc_tier", "").astype(str) == "informative")
+          & (d["purity"] >= 0.30)].copy()
+    if s.empty:
+        return
+    style(cfg)
+    col = {"chb": theme.OKABE["blue"], "cue": theme.OKABE["vermillion"]}
+    cohort_lab = {c: c.upper() for c in col}
+    for metric, mlab in _HRD_METRICS:
+        if metric not in s.columns:
+            continue
+        a = s[s.cohort == "chb"][metric].to_numpy(float)
+        b = s[s.cohort == "cue"][metric].to_numpy(float)
+        fig, axes = plt.subplots(1, 2, figsize=theme.figsize(
+            cfg, total_w=6.8, panel_h=3.2))
+        ax = axes[0]
+        grid = np.linspace(0, max(a.max(), b.max()) + 5, 300)
+        for arr, c in ((a, "chb"), (b, "cue")):
+            if len(arr) > 2 and arr.std() > 0:
+                kde = stats.gaussian_kde(arr, bw_method=0.35)
+                ax.fill_between(grid, kde(grid), alpha=0.25, color=col[c])
+                ax.plot(grid, kde(grid), color=col[c], lw=1.2,
+                        label=f"{cohort_lab[c]} (n={len(arr)}, "
+                              f"med={np.median(arr):.0f})")
+                ax.plot(arr, np.full_like(arr, -0.001), "|", color=col[c],
+                        ms=5, alpha=0.5)
+        if metric == "HRD_sum":
+            ax.axvline(42, color="#555555", lw=0.7, ls=":")
+            ax.text(42.5, ax.get_ylim()[1] * 0.02, "HRD+ 42", fontsize=5.5,
+                    rotation=90, va="bottom", color="#555555")
+        p_mw = stats.mannwhitneyu(a, b)[1]
+        ax.set_xlabel(mlab)
+        ax.set_ylabel("Density")
+        ax.set_title(f"density  |  MW p={p_mw:.2f}", fontsize=7.5)
+        ax.legend(frameon=False, fontsize=6)
+        ax.tick_params(labelsize=6.5)
+        ax = axes[1]
+        for arr, c in ((a, "chb"), (b, "cue")):
+            xs = np.sort(arr)
+            ys = np.arange(1, len(xs) + 1) / len(xs)
+            ax.step(xs, ys, where="post", color=col[c], lw=1.2,
+                    label=cohort_lab[c])
+        ks = stats.ks_2samp(a, b)
+        ax.annotate(f"KS D={ks.statistic:.2f}\np={ks.pvalue:.2f}",
+                    xy=(0.97, 0.06), xycoords="axes fraction", ha="right",
+                    fontsize=6.5)
+        ax.set_xlabel(mlab)
+        ax.set_ylabel("Empirical CDF")
+        ax.set_title("ECDF", fontsize=7.5)
+        ax.legend(frameon=False, fontsize=6, loc="lower right")
+        ax.tick_params(labelsize=6.5)
+        fig.suptitle(f"{mlab} distribution, CUE vs CHB (informative, "
+                     f"purity$\\geq$0.30, n={len(s)})", fontsize=8)
+        theme.finalize(fig, "constrained", wspace=0.25)
+        save(fig, cfg, f"ABS_hrd_dist_{metric}")
+
+
 def figures_abs(res: dict, cfg) -> None:
     plot_abs_wgd(res.get("wgd"), cfg)
     plot_abs_metric_dists(res.get("metrics"), res.get("scores"), cfg)
     plot_abs_purity_adjusted(res.get("purity_peaks"), cfg)
+    plot_wgd_class_stacked(res.get("cn_tables"), cfg)
+    plot_ploidy_rank(res.get("cn_tables"), cfg)
+    hrd = None
+    try:
+        hrd = pd.read_csv(out_table(cfg, "ABS_hrd_scores.tsv"), sep="\t")
+    except (OSError, ValueError):
+        hrd = None
+    if hrd is not None and len(hrd):
+        plot_hrd_dists(hrd, cfg)
     plot_wgd_class_stacked(res.get("cn_tables"), cfg)
     plot_ploidy_rank(res.get("cn_tables"), cfg)

@@ -104,6 +104,17 @@ predictGermlineGenotypes"的连带 bug。修复后（同一宽表、同一参数
 purity=1.0 的平坦基因组，官方 "Likely normal" 形态）保留在主分析中
 （WGD− 处理），并另做了 purity≥0.30 的敏感性分析——结论一致。
 
+## 0.4 HRD 疤痕评分（scarHRD 参考实现，2026-10-13）
+
+vendored scarHRD（MIT，Sztupinszki 2018）对全部 226 样本计算
+HRD-LOH / TAI / LST / HRD-sum（7 秒，零错误；表
+`ABS_hrd_scores.tsv`）。**结论：组间全阴性**（四列 MW p=0.43-0.91；
+HRD+率(≥42) 21% vs 20%，Fisher p=1.0）。**强混杂警告**：HRD-sum 与
+分割段数 rho=0.90、与纯度 rho=-0.60——低纯度样本的过分割噪声直接灌分
+（HRD_adj 的 ploidy 校正修不了这个维度）；35 个 HRD+(≥42) 样本中 24
+个 purity<0.40。解读必须限定 informative + purity≥0.30 层。WGD 阶梯与
+HRD_sum 无关（rho=0.07）——混杂源是分割质量而非倍增。
+
 ## 1. 状态总结
 
 | 环节 | 状态 |
