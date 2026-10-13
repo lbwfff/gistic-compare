@@ -91,6 +91,8 @@ def _abs_cfg(cfg: dict[str, Any], rcfg: dict) -> dict:
                                              90.0)),
         cn_thr_wgd=float(a.get("cn_thr_wgd", 3.0)),
         loh_frac_wgd=float(a.get("loh_frac_wgd", 0.30)),
+        wgd_class_frac=float(a.get("wgd_class_frac", 0.30)),
+        wgd_multi_frac=float(a.get("wgd_multi_frac", 0.10)),
         min_purity=float(a.get("min_purity", 0.30)),
         ploidy_wgd=float(a.get("ploidy_wgd", 3.7)),
         cn_arm_gain=float(a.get("cn_arm_gain", 3.5)),
@@ -649,6 +651,41 @@ def run_module_abs(cfg: dict[str, Any],
     if bands.empty:
         return skip("no cytoband table available")
     arms = _arm_intervals(bands)
+
+    # ---- per-sample WGD-multiplicity metrics + QC tier ----
+    # strict WGD signature: nMinor >= 2 (both parental copies >= 2 —
+    # parsimonious evidence for whole-genome doubling; (2,1)-type segments
+    # are ambiguous, a single-allele gain produces them without any WGD).
+    # Multiplicity ladder: minor >= 3 / total >= 8 fractions carry the
+    # >=2x reading.  purity >= 0.99 fits are non-informative (purity and
+    # ploidy are unidentifiable: flat "likely normal" genomes or
+    # balanced-elevated degenerate fits).
+    for cid, seg in seg_tables.items():
+        cn = cn_tables.get(cid)
+        if cn is None or seg is None or seg.empty:
+            continue
+        sg = seg.copy()
+        sg["L"] = (sg["end"] - sg["start"]).clip(lower=1)
+        rows = {}
+        for s, g in sg.groupby("sample"):
+            Ls, L = g["L"], g["L"].sum()
+            mn, tt = g["cn_minor"], g["cn_total"]
+            rows[s] = dict(
+                strict_frac=Ls[mn >= 2].sum() / L,
+                f_min3p=Ls[mn >= 3].sum() / L,
+                f_t8p=Ls[tt >= 8].sum() / L)
+        if not rows:
+            continue
+        cn = cn.merge(pd.DataFrame.from_dict(rows, orient="index")
+                      .rename_axis("sample").reset_index(),
+                      on="sample", how="left")
+        cn["wgd_class"] = np.where(
+            cn["strict_frac"] < acfg["wgd_class_frac"], "0x",
+            np.where((cn["f_min3p"] >= acfg["wgd_multi_frac"])
+                     | (cn["f_t8p"] >= acfg["wgd_multi_frac"]), ">=2x", "1x"))
+        cn["qc_tier"] = np.where(cn["purity"] >= 0.99,
+                                 "non-informative", "informative")
+        cn_tables[cid] = cn
 
     # ---- per-sample absolute metrics + CN-space scores ----
     scores = _cn_scores(cfg, seg_tables, arms, acfg)

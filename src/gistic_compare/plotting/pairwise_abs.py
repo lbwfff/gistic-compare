@@ -5,6 +5,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 from ._core import *  # noqa: F401,F403
 
@@ -139,7 +140,149 @@ def plot_abs_purity_adjusted(peaks: pd.DataFrame, cfg) -> None:
     save(fig, cfg, "ABS_purity_adjusted")
 
 
+_WGD_CLASS_COLORS = {"0x": "#BBBBBB", "1x": theme.OKABE["blue"],
+                     ">=2x": theme.OKABE["vermillion"]}
+_WGD_CLASS_LABEL = {"0x": "no WGD", "1x": "1x WGD", ">=2x": "$\\geq$2x WGD"}
+
+
+def _wgd_informative(cn_tables: dict) -> pd.DataFrame:
+    parts = [t[t.get("qc_tier", "").astype(str) == "informative"]
+             for t in cn_tables.values()]
+    parts = [p.assign(cohort=cid) for cid, p in zip(cn_tables, parts)
+             if len(p)]
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
+def plot_wgd_class_stacked(cn_tables: dict, cfg) -> None:
+    """WGD-status composition per cohort, strict 3-class vs loose binary.
+
+    Strict: nMinor >= 2 signature (parsimonious whole-genome-doubling
+    evidence; (2,1)-type segments are ambiguous and excluded).  Loose:
+    the legacy binary wgd_status (includes ambiguous (2,1) segments —
+    sensitive but not specific).  Non-informative samples (purity >= 0.99)
+    are excluded and their counts annotated.
+    """
+    d = _wgd_informative(cn_tables)
+    if d.empty:
+        return
+    d = d.copy()
+    d["wgd_status"] = pd.to_numeric(d["wgd_status"], errors="coerce").map(
+        {0: "WGD-", 1: "WGD+"})
+    style(cfg)
+    cohs = list(cn_tables.keys())
+    fig, axes = plt.subplots(1, 2, figsize=theme.figsize(
+        cfg, total_w=6.4, panel_h=3.3))
+
+    ax = axes[0]
+    cats = ["0x", "1x", ">=2x"]
+    tab = (pd.crosstab(d["cohort"], d["wgd_class"])
+           .reindex(index=cohs, columns=cats).fillna(0).astype(int))
+    frac = tab.div(tab.sum(axis=1), axis=0)
+    bottom = np.zeros(len(cohs))
+    for c in cats:
+        v = frac[c].to_numpy()
+        ax.bar(range(len(cohs)), v, bottom=bottom, color=_WGD_CLASS_COLORS[c],
+               width=0.62, label=_WGD_CLASS_LABEL[c], edgecolor="white",
+               linewidth=0.5)
+        for i, (vv, bb) in enumerate(zip(v, bottom)):
+            if vv > 0.04:
+                ax.text(i, bb + vv / 2, f"{vv:.0%}\n({tab[c].iloc[i]})",
+                        ha="center", va="center", fontsize=6,
+                        color="white" if c != "0x" else "#333333")
+        bottom += v
+    chi2, p_chi, _, _ = stats.chi2_contingency(tab.to_numpy())
+    excl = {c: len(t) - int(tab.loc[c].sum())
+            for c, t in zip(cohs, cn_tables.values())}
+    ax.set_xticks(range(len(cohs)))
+    ax.set_xticklabels([f"{c}\n(n={int(tab.loc[c].sum())}, "
+                        f"excl. {excl[c]})" for c in cohs], fontsize=7)
+    ax.set_ylabel("Fraction of samples")
+    ax.set_ylim(0, 1.0)
+    ax.set_title(f"Strict (nMinor$\\geq$2 signature)  "
+                 f"$\\chi^2$={chi2:.2f}, p={p_chi:.2f}", fontsize=7.5)
+    ax.legend(frameon=False, fontsize=6, loc="upper right")
+    ax.tick_params(labelsize=6.5)
+
+    ax = axes[1]
+    cats2 = ["WGD-", "WGD+"]
+    tab2 = (pd.crosstab(d["cohort"], d["wgd_status"])
+            .reindex(index=cohs, columns=cats2).fillna(0).astype(int))
+    frac2 = tab2.div(tab2.sum(axis=1), axis=0)
+    bottom = np.zeros(len(cohs))
+    cols2 = {"WGD-": "#BBBBBB", "WGD+": theme.OKABE["vermillion"]}
+    for c in cats2:
+        v = frac2[c].to_numpy()
+        ax.bar(range(len(cohs)), v, bottom=bottom, color=cols2[c],
+               width=0.62, label=c, edgecolor="white", linewidth=0.5)
+        for i, (vv, bb) in enumerate(zip(v, bottom)):
+            if vv > 0.04:
+                ax.text(i, bb + vv / 2, f"{vv:.0%}\n({tab2[c].iloc[i]})",
+                        ha="center", va="center", fontsize=6,
+                        color="white" if c != "WGD-" else "#333333")
+        bottom += v
+    odds, p_f = stats.fisher_exact(tab2.to_numpy())
+    ax.set_xticks(range(len(cohs)))
+    ax.set_xticklabels([f"{c}\n(n={int(tab2.loc[c].sum())})" for c in cohs],
+                       fontsize=7)
+    ax.set_ylabel("Fraction of samples")
+    ax.set_ylim(0, 1.0)
+    ax.set_title(f"Loose (incl. ambiguous (2,1) segs)  Fisher p={p_f:.2f}",
+                 fontsize=7.5)
+    ax.legend(frameon=False, fontsize=6, loc="upper right")
+    ax.tick_params(labelsize=6.5)
+
+    total = sum(len(t) for t in cn_tables.values())
+    fig.suptitle(f"WGD status by cohort (assessable samples only, n={len(d)}; "
+                 f"excluding {total - len(d)} purity=1.0 non-informative)",
+                 fontsize=8)
+    theme.finalize(fig, "constrained", wspace=0.25)
+    save(fig, cfg, "WGD_class_stacked")
+
+
+def plot_ploidy_rank(cn_tables: dict, cfg) -> None:
+    """Ploidy rank plot per cohort (ASCAT-release style): samples sorted by
+    ploidy, cohort median in red, points coloured by WGD class."""
+    d = _wgd_informative(cn_tables)
+    if d.empty:
+        return
+    style(cfg)
+    cohs = list(cn_tables.keys())
+    fig, ax = plt.subplots(figsize=theme.figsize(cfg, total_w=4.0,
+                                                 panel_h=3.4))
+    for i, c in enumerate(cohs):
+        ax.axvspan(i - 0.40, i + 0.40, color="#D9D9D9" if i % 2 else "white",
+                   zorder=0)
+    for i, c in enumerate(cohs):
+        g = d[d["cohort"] == c].sort_values("ploidy_abs").reset_index(
+            drop=True)
+        g["xr"] = i - 0.36 + 0.72 * (np.arange(1, len(g) + 1) / len(g))
+        for cls in ("0x", "1x", ">=2x"):
+            s = g[g["wgd_class"] == cls]
+            if s.empty:
+                continue
+            ax.scatter(s["xr"], s["ploidy_abs"], s=9,
+                       color=_WGD_CLASS_COLORS[cls], edgecolors="none",
+                       zorder=3, label=_WGD_CLASS_LABEL[cls] if i == 0 else None)
+        med = float(g["ploidy_abs"].median())
+        ax.plot([i - 0.40, i + 0.40], [med, med], color="red", lw=1.3,
+                zorder=4)
+        ax.text(i + 0.28, med + 0.10, f"{med:.2f}", ha="center", fontsize=6.5,
+                color="red", zorder=5)
+    ax.axhline(2.0, color="#555555", lw=0.5, ls=":", zorder=1)
+    ax.set_xticks(range(len(cohs)))
+    ax.set_xticklabels([c.upper() for c in cohs], fontsize=8)
+    ax.set_xlim(-0.55, len(cohs) - 0.45)
+    ax.set_ylabel("Ploidy", fontsize=8)
+    ax.tick_params(labelsize=6.5)
+    ax.legend(frameon=False, fontsize=6.5, loc="upper left",
+              title="WGD class", title_fontsize=6.5)
+    theme.finalize(fig, "constrained")
+    save(fig, cfg, "ABS_ploidy_rank")
+
+
 def figures_abs(res: dict, cfg) -> None:
     plot_abs_wgd(res.get("wgd"), cfg)
     plot_abs_metric_dists(res.get("metrics"), res.get("scores"), cfg)
     plot_abs_purity_adjusted(res.get("purity_peaks"), cfg)
+    plot_wgd_class_stacked(res.get("cn_tables"), cfg)
+    plot_ploidy_rank(res.get("cn_tables"), cfg)
