@@ -173,15 +173,25 @@ for (i in seq_along(tumor_logr)) {
   }
 }
 
-# NA hygiene (ASCAT 优化报告 §5.1): a single NA probe makes getMad() return
-# NA for its whole 1000-probe window and fastAspcf then silently SKIPS that
-# window (degenerate segmentation, no warning).  Drop NA rows here, once,
-# across logR/BAF for every sample — the het-calls grid is filtered the
-# same way further down.
+# BAF placeholder semantics (official ASCAT_fromCELfiles.R): PennCNV marks
+# CN probes (no genotype) with BAF=2 — the official script converts those
+# to NA before ASCAT.  BAF NA is therefore the EXPECTED state on CN probes
+# and ASCAT handles it natively (they simply don't enter BAF segmentation).
+for (i in seq_along(tumor_baf)) {
+  v <- tumor_baf[[i]][[3]]
+  v[!is.na(v) & v == 2] <- NA
+  tumor_baf[[i]][[3]] <- v
+}
+
+# NA hygiene (ASCAT 优化报告 §5.1): a single NA probe in logR makes getMad()
+# return NA for its whole 1000-probe window and fastAspcf then silently
+# SKIPS that window (degenerate segmentation, no warning).  Drop rows with
+# NA logR here, once, across all samples.  BAF NAs are NOT a reason to drop
+# a row (official CN-probe state — see above).
 na_keep <- stats::complete.cases(do.call(
-  cbind, c(lapply(tumor_logr, `[[`, 3), lapply(tumor_baf, `[[`, 3))))
+  cbind, lapply(tumor_logr, `[[`, 3)))
 if (!all(na_keep)) {
-  cat(sprintf("[abs] dropping %d marker row(s) with NA logR/BAF values\n",
+  cat(sprintf("[abs] dropping %d marker row(s) with NA logR values\n",
               sum(!na_keep)))
   grid <- grid[na_keep, , drop = FALSE]
   tumor_logr <- lapply(tumor_logr, function(d) d[na_keep, , drop = FALSE])
@@ -205,6 +215,23 @@ if (nrow(markers) != nrow(grid) || any(markers$chr != grid[[1]]) ||
     any(markers$pos != grid[[2]])) {
   stop("markers.tsv.gz grid differs from the per-sample marker grid")
 }
+
+# Official SNP6 protocol (ASCAT ExampleData/ASCAT_fromCELfiles.R): PennCNV
+# derives CN probes and SNP probes on different baselines, so logR must be
+# centred SEPARATELY per probe class, per sample — otherwise the two
+# interleaved probe classes form a systematic sawtooth (measured offsets
+# +0.01..+0.11 log2 in this cohort) that pollutes the noise estimate, the
+# segmentation and the (rho, psi) distance surface.
+is_cn_probe <- startsWith(as.character(markers$name), "CN")
+for (i in seq_along(tumor_logr)) {
+  v <- tumor_logr[[i]][[3]]
+  v[is_cn_probe] <- v[is_cn_probe] - mean(v[is_cn_probe], na.rm = TRUE)
+  v[!is_cn_probe] <- v[!is_cn_probe] - mean(v[!is_cn_probe], na.rm = TRUE)
+  tumor_logr[[i]][[3]] <- v
+}
+cat(sprintf(paste0("[abs] official SNP6 CN/SNP probe-class centring applied ",
+                   "(%d CN / %d SNP probes)\n"),
+            sum(is_cn_probe), sum(!is_cn_probe)))
 
 write_wide <- function(frames, path) {
   vals <- do.call(cbind, frames)
@@ -265,7 +292,9 @@ if (use_cache) {
                   resolve(gc_file) else character(0))
   in_files <- in_files[!is.na(in_files)]
   keyfile <- tempfile(fileext = ".key")
-  writeLines(paste(c("abs-cn", cohort, penalty, seed,
+  # pipeline version invalidates caches produced before the official SNP6
+  # probe-class centring + BAF-placeholder-as-NA semantics were adopted
+  writeLines(paste(c("abs-cn", "v3-gg-namekeyed", cohort, penalty, seed,
                      unname(tools::md5sum(in_files)))), keyfile)
   key_hash <- unname(tools::md5sum(keyfile))
   unlink(keyfile)
@@ -304,15 +333,20 @@ if (has_germline) {
       "tumor-only genotype inference\n")
 }
 
+tmark <- function(label, t0) cat(sprintf("[abs][t] %s: %.1f s\n", label,
+                                as.numeric(difftime(Sys.time(), t0,
+                                                    units = "secs"))))
 if (d1_hit) {
   ascat.data <- readRDS(d1_path)
 } else {
+t0 <- Sys.time()
 ascat.data <- ascat.loadData(
   Tumor_LogR_file = file.path(work, "Tumor_LogR.txt"),
   Tumor_BAF_file = file.path(work, "Tumor_BAF.txt"),
   if (has_germline) file.path(work, "Germline_LogR.txt") else NULL,
   if (has_germline) file.path(work, "Germline_BAF.txt") else NULL,
   chrs = c(1:22))
+tmark("loadData", t0)
 
 # GC correction (the standard SNP6 step; without it ASCAT's grid search
 # fails to reach the goodness-of-fit threshold on HAPMAP-normalised
@@ -322,10 +356,15 @@ if (!is.null(gc_file) && nzchar(gc_file)) {
     resolve(gc_file)
   if (is.na(gc_path)) stop("GC content file not found: ", gc_file)
   cat(sprintf("[abs] GC correction: %s\n", basename(gc_path)))
+  t0 <- Sys.time()
   ascat.data <- ascat.correctLogR(ascat.data, GCcontentfile = gc_path)
+  tmark("GC correction", t0)
 }
 if (use_cache) saveRDS(ascat.data, d1_path)
 }
+
+}
+
 
 ascat.gg <- NULL
 if (!has_germline && has_het) {
@@ -358,16 +397,40 @@ if (!has_germline && has_het) {
   }
   raw <- do.call(cbind, lapply(calls, function(d)
     tolower(as.character(d[[3]]))))
-  het_mat <- matrix(TRUE, nrow = nrow(grid), ncol = length(calls),
-                    dimnames = list(markers$name, man$sample))
-  het_mat[raw %in% c("ab", "1", "het")] <- FALSE
-  het_mat[raw %in% c("aa", "bb", "0", "2", "hom", "homz")] <- TRUE
-  # ASCAT's contract: germlinegenotypes TRUE = germline homozygous.
-  # Uncalled (NN) markers keep TRUE — excluding them from the het set
-  # and treating them as homozygous stretches, as in the manual ASCAT
-  # SNP-array workflow (NA here would break the hom-stretch logic and
-  # the fit acceptance — verified on the CUE/CHB pilot)
-  ascat.gg <- list(germlinegenotypes = het_mat)
+  # KEY FIX: ascat.loadData reorders probes by genomic position (stock and
+  # -fast alike), so a het mask built positionally on the manifest/grid
+  # order is SCRAMBLED relative to the loaded matrices — het flags land on
+  # hom/uncalled probes, the BAF PCF then segments garbage (b≈0.105
+  # everywhere), and every downstream fit degenerates.  Build the mask
+  # keyed by (chr, pos) here and map it onto the LOADED object's row order
+  # by probe name further down.
+  het_flag <- matrix(TRUE, nrow = nrow(markers), ncol = length(calls),
+                     dimnames = list(markers$name, man$sample))  # TRUE = hom
+  key_m <- paste(markers$chr, markers$pos)
+  for (i in seq_along(calls)) {
+    hit <- match(paste(calls[[i]][[1]], calls[[i]][[2]]), key_m)
+    if (anyNA(hit)) stop("call file has rows outside the marker grid (sample ",
+                         man$sample[i], ")")
+    cv <- tolower(as.character(calls[[i]][[3]]))
+    het_flag[hit, i] <- !(cv %in% c("ab", "1", "het"))  # NA call -> hom
+  }
+  # ASCAT's contract: germlinegenotypes TRUE = germline homozygous, and the
+  # matrix rows must follow the LOADED object's (reordered) row order.
+  # Uncalled (NN) markers keep TRUE — excluding them from the het set and
+  # treating them as homozygous stretches, as in the manual ASCAT SNP-array
+  # workflow (NA here would break the hom-stretch logic and the fit
+  # acceptance — verified on the CUE/CHB pilot)
+  rn <- rownames(ascat.data$Tumor_BAF)
+  gg <- matrix(TRUE, nrow = length(rn), ncol = ncol(het_flag),
+               dimnames = list(rn, man$sample))
+  for (i in seq_len(ncol(het_flag))) {
+    # intersect: ascat.correctLogR keeps only probes present in the GC
+    # reference file (official behaviour — our grid loses ~4.3k probes
+    # there), so a handful of het probes may have no row in the object
+    hn <- intersect(rownames(het_flag)[het_flag[, i] == FALSE], rn)
+    gg[hn, i] <- FALSE
+  }
+  ascat.gg <- list(germlinegenotypes = gg)
 }
 
 pcf <- function(gg = NULL) {
@@ -377,6 +440,8 @@ pcf <- function(gg = NULL) {
   do.call(if (use_fast_ascat) ascat.aspcf_parallel
           else ascat.aspcf_sequential, args)
 }
+if (!d2_hit) {
+t0 <- Sys.time()
 if (has_germline) {
   ascat.data <- pcf()
 } else if (!is.null(ascat.gg)) {
@@ -387,6 +452,7 @@ if (has_germline) {
   ascat.data <- pcf(list(germlinegenotypes = gg$germlinegenotypes,
                          failedarrays = gg$failedarrays))
 }
+tmark("aspcf", t0)
 if (use_cache) saveRDS(ascat.data, d2_path)
 }
 
@@ -397,7 +463,9 @@ ras <- function(rho = NULL, psi = NULL) {
   do.call(if (use_fast_ascat) ascat.runAscat_parallel
           else ascat.runAscat_sequential, args)
 }
+t0 <- Sys.time()
 ascat.output <- ras()
+tmark("runAscat (automatic)", t0)
 
 # ---------------------------------------------------------------------------
 # fallback: samples that fail the automatic grid search (ASCAT's
@@ -430,6 +498,7 @@ subset1 <- function(s_name) {
   o$failedarrays = character(0)
   o
 }
+t0 <- Sys.time()
 if (length(retry)) {
   for (s_name in retry) {
     s_pos = match(s_name, ascat.data$samples)
@@ -500,6 +569,7 @@ if (length(retry)) {
         setdiff(ascat.output$failedarrays, s_name)
     }
   }
+  tmark("manual-fit fallback", t0)
 }
 # ---------------------------------------------------------------------------
 # per-sample harmonized metrics + WGD heuristics

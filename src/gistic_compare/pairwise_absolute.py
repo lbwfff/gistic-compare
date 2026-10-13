@@ -728,7 +728,9 @@ def run_module_abs(cfg: dict[str, Any],
     purity_peaks = _purity_adjusted_peaks(cfg, data, cn_tables)
 
     sum_rows = []
-    if len(wgd):
+    # metric_rows need >=3 samples per cohort (Mann-Whitney); small pilots
+    # produce an empty metrics frame without columns
+    if len(wgd) and "comparison" in metrics.columns:
         main = wgd[~wgd["comparison"].str.contains("high-purity", na=False)]
 
         def _mode_of(cid: str, col: str) -> str:
