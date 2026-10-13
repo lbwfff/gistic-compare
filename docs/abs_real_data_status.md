@@ -46,6 +46,23 @@
    拼接缺逗号、awk 列统计把字段当样本）→ 多次产生误导信号。
 9. **工具输出一度不可靠**（读文件返回陈旧/混乱内容）→ 反复用 git 与
    独立命令核实。
+10. **Bug #2（独立复核报告发现，2026-10-13）：`ascat.aspcf_parallel`
+   不按样本切分 ascat.gg**——gg 经 `...` 原样透传给单样本子对象，内部
+   `gg[, sample]` 恒取第 1 列 → 多样本 worker 进程里除首样本外全部用错
+   germline 掩码。生产路径 round-robin 分块（jobs=4 → 4×~57 样本）会
+   大面积触发；pilot 因每 worker 恰好 1 样本而侥幸未触发。已修（显式
+   ascat.gg 参数 + 按样本切片 + `.realign_gg` 名字键守卫），同进程双样本
+   验证 EA098 恢复 0.48/4.54。
+11. **`resolve()` 未向量化**——`--cache-rds` 对 ≥2 样本 manifest 直接
+   报错（R≥4.3 将 length>1 的 is.na 升级为 error）；pilot 侥幸未开缓存。
+   已修（vapply 向量化）。
+12. **`ascat.*_sequential` 回退函数被引用但从未定义**——快栈加载失败时
+   fallback 会 "could not find function"。已补定义。
+
+> 独立复核报告（GSEdata/ASCAT/ABS_真实数据诊断.md）的核对结论：除
+> "修复已提交到 bench/" 一句位置有误（实际在 ~/project/ASCAT/diag/，
+> bench 未动）外，其余结论全部核实成立，含对本留档 §3 误判的纠正
+> （0.44/3.31 是正确答案，被污染的是角点解）。
 
 ## 0.2 角点收敛问题——已解决（根因：gg 掩码错位）
 

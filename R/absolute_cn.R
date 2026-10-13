@@ -100,6 +100,28 @@ if (all(file.exists(file.path(opt_dir, c("ascat_fast.R", "aspcf_cpp.cpp",
       " — using stock ASCAT\n", sep = "")
 }
 
+# stock-ASCAT fallbacks used when the fast stack is unavailable: same
+# signatures as the parallel helpers so the call sites stay unchanged
+ascat.aspcf_sequential <- function(ASCATobj, ncores = NULL, use_fast = FALSE,
+                                   penalty, seed, ascat.gg = NULL, ...) {
+  if (!is.null(ascat.gg)) {
+    ASCAT::ascat.aspcf(ASCATobj, ascat.gg = ascat.gg, penalty = penalty,
+                       seed = seed, out.dir = tempdir())
+  } else {
+    ASCAT::ascat.aspcf(ASCATobj, penalty = penalty, seed = seed,
+                       out.dir = tempdir())
+  }
+}
+ascat.runAscat_sequential <- function(ASCATobj, ncores = NULL,
+                                      use_fast = FALSE, gamma, max_ploidy,
+                                      plot = TRUE, img.dir = ".",
+                                      rho_manual = NA_real_,
+                                      psi_manual = NA_real_, ...) {
+  ASCAT::ascat.runAscat(ASCATobj, gamma = gamma, max_ploidy = max_ploidy,
+                        rho_manual = rho_manual, psi_manual = psi_manual,
+                        img.dir = img.dir)
+}
+
 
 manifest_path <- getarg("--manifest")
 cohort <- getarg("--cohort")
@@ -133,9 +155,12 @@ man <- man[man$cohort == tolower(cohort), ]
 if (nrow(man) == 0) stop("no manifest rows for cohort ", cohort)
 base_dir <- dirname(normalizePath(manifest_path))
 resolve <- function(p) {
-  if (is.null(p) || length(p) == 0 || is.na(p) || p == "") return(NA_character_)
-  pth <- file.path(base_dir, p)
-  if (file.exists(pth)) normalizePath(pth) else NA_character_
+  # vectorised: the cache path passes whole manifest columns here
+  vapply(p, function(q) {
+    if (is.null(q) || length(q) == 0 || is.na(q) || q == "") return(NA_character_)
+    pth <- file.path(base_dir, q)
+    if (file.exists(pth)) normalizePath(pth) else NA_character_
+  }, character(1))
 }
 
 cat(sprintf("[abs] cohort %s: %d sample(s)\n", cohort, nrow(man)))

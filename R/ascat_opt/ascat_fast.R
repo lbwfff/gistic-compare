@@ -198,6 +198,38 @@ fastAspcf_fast <- function(logR, allB, kmin, gamma, isTargetedSeq) {
 }
 
 ## ---------------------------------------------------------------------------
+## 5a. Safety net for ascat.gg / germline genotypes.
+##
+##  ascat.loadData() REORDERS the probes: it sorts by chromosome 1..22 and then
+##  by position within each chromosome.  Upstream ascat.aspcf() assumes the
+##  germline-genotype matrix it is given is already in that order (true for its
+##  own ascat.predictGermlineGenotypes() and for the matched-germline path,
+##  because both are built from the ASCAT object).
+##
+##  If a caller builds the mask from a raw marker/probe grid instead, the rows
+##  are in FILE order and ascat.aspcf() silently applies the het mask to the
+##  WRONG probes.  On SNP6.0 that drags ~50% CN-probe placeholders (BAF = 2.0)
+##  into the BAF segmentation, drives Tumor_BAF_segmented negative and makes the
+##  whole purity/ploidy fit collapse onto a grid corner.  Upstream emits no
+##  warning at all.
+##
+##  This guard detects the situation (same probe IDs, different order) and
+##  reorders/subsets instead of producing garbage.  It is a no-op whenever the
+##  input is already in the object's order, so results stay bit-identical to
+##  upstream in every correct usage.
+## ---------------------------------------------------------------------------
+.realign_gg <- function(gg, target_names, label = "germline genotypes (ascat.gg)") {
+  if (is.null(gg) || is.null(rownames(gg))) return(gg)
+  rn <- rownames(gg)
+  if (identical(rn, target_names)) return(gg)
+  if (!all(target_names %in% rn)) return(gg)
+  message(label, ": rows are in a different order from the ASCAT object ",
+          "(ascat.loadData reorders probes by chromosome then position) — ",
+          "reordering to the object's probe order")
+  gg[match(target_names, rn), , drop = FALSE]
+}
+
+## ---------------------------------------------------------------------------
 ## 5. ascat.aspcf_fast: identical algorithm; the three hot loops are:
 ##      (a) the per-probe c() accumulation building logRc   -> preallocated
 ##      (b) the per-segment c() accumulation building logRd -> preallocated
@@ -210,6 +242,7 @@ ascat.aspcf_fast <- function(ASCATobj, selectsamples = 1:length(ASCATobj$samples
   set.seed(seed)
   gg <- if (!is.null(ascat.gg)) ascat.gg$germlinegenotypes else
     ASCATobj$Germline_BAF < 0.3 | ASCATobj$Germline_BAF > 0.7
+  gg <- .realign_gg(gg, rownames(ASCATobj$Tumor_LogR))
   ghs <- predictGermlineHomozygousStretches_fast(ASCATobj$chr, gg)
 
   segmentlengths <- unique(c(penalty, 35, 50, 70, 100, 140))

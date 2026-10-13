@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **ABS — `ascat.aspcf_parallel` 不按样本切分 ascat.gg（独立复核发现，
+  全队列阻塞项）**：gg 经 `...` 原样透传给单样本子对象，内部 `gg[, sample]`
+  恒取第 1 列——多样本 worker 进程中除首样本外全部用错 germline 掩码
+  （生产路径 jobs=4 → 4×~57 样本会大面积触发；4 样本 pilot 因每 worker
+  恰好 1 样本而未暴露）。修复：显式 `ascat.gg` 参数 + 按样本切片 +
+  `.realign_gg` 名字键防御守卫（正确输入时 no-op）。同进程双样本验证：
+  EA098 恢复 purity 0.48 / ploidy 4.54。独立复核：
+  `GSEdata/ASCAT/ABS_真实数据诊断.md`（结论全部核实成立）。
+- ABS：`resolve()` 向量化（此前 `--cache-rds` 对 ≥2 样本 manifest 因
+  R≥4.3 的 length>1 is.na error 直接崩溃）；补定义
+  `ascat.aspcf_sequential` / `ascat.runAscat_sequential`（快栈不可用时
+  的 stock 回退此前被引用但未定义，会直接崩）。
 - **ABS — 退化拟合根因修复（gg het 掩码与 loadData 排序错位）**：
   `ascat.loadData`（stock 与 fast 版均）把矩阵按基因组位置重排，
   `ascat.correctLogR` 再按 GC 参考文件取交集（本队列丢失 ~4.3k 探针），

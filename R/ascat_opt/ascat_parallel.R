@@ -45,15 +45,27 @@
 #' @param ASCATobj an ASCAT object (from ascat.loadData / ascat.correctLogR)
 #' @param ncores number of forked workers (default: all but one core)
 #' @param use_fast use ascat.aspcf_fast (default TRUE); set FALSE to keep upstream code
-#' @param ... passed on to ascat.aspcf (e.g. penalty, ascat.gg)
+#' @param ascat.gg optional germline genotypes, as in ascat.aspcf.  Each worker
+#'   receives only its own sample's column: ascat.aspcf indexes the mask as
+#'   `gg[, sample]` where `sample` counts within the sub-object it is given, so
+#'   passing the full multi-sample mask would silently give every worker the
+#'   FIRST sample's genotypes.
+#' @param ... passed on to ascat.aspcf (e.g. penalty)
 ascat.aspcf_parallel <- function(ASCATobj, ncores = max(1L, parallel::detectCores() - 1L),
-                                 use_fast = TRUE, ...) {
+                                 use_fast = TRUE, ascat.gg = NULL, ...) {
   .guard_fork_safety()
   S <- length(ASCATobj$samples)
   ncores <- max(1L, min(as.integer(ncores), S))
   worker <- function(s) {
     f <- if (use_fast) ascat.aspcf_fast else ASCAT::ascat.aspcf
-    r <- f(.ascat_subset(ASCATobj, s), out.dir = NA, ...)
+    gg <- ascat.gg
+    if (!is.null(gg)) {
+      if (!is.null(gg$germlinegenotypes) && ncol(gg$germlinegenotypes) >= s)
+        gg$germlinegenotypes <- gg$germlinegenotypes[, s, drop = FALSE]
+      if (!is.null(gg$failedarrays) && length(gg$failedarrays) >= s)
+        gg$failedarrays <- gg$failedarrays[s]
+    }
+    r <- f(.ascat_subset(ASCATobj, s), out.dir = NA, ascat.gg = gg, ...)
     ## Return bare numeric payloads.  The probe-ID attributes are by far the
     ## largest part of the result (a 900k-element named vector costs ~50 MB to
     ## serialise back to the parent), so strip them and ship a compact integer
