@@ -161,20 +161,28 @@ FACETS 不直接输出 WGD 标签，按等位基因定义实现（手册 §4.6 �
 - [x] **数据**：下载两队列的 Birdseed 基因型调用 + LRR/BAF 宽表
       （`scripts/prepare_abs_inputs.py` 切分为 per-sample 文件 + manifest；
       CUE 136 / CHB 90，与 GISTIC 队列规模精确一致）
-- [ ] **数据**：确认是否有匹配 normal（无 → tumor-only + 样本自身
+- [x] **数据**：确认是否有匹配 normal（无 → tumor-only + 样本自身
       Birdseed het 代理，已实现；如队列含 normal 可做 pooled 对照）
 - [x] **环境**：R ≥ 4.x + ASCAT 安装验证（VanLoo-lab/ascat 3.2.0；其
       未使用的 `copynumber` Import 已移除后安装——该包只出现在注释中）
 - [x] 实现 `R/absolute_cn.R`（契约见 §4.3；ASCAT 3.2 API：
       `ascat.loadData` → `ascat.correctLogR(GC)` →
       `ascat.aspcf(penalty, seed, ascat.gg)` → `ascat.runAscat(gamma)`）
+- [x] **真实数据调试闭环（2026-10-13）**：根因 = gg 掩码按清单顺序位置
+      构建而 loadData 按基因组位置重排探针 → 掩码错位 → BAF 分段垃圾；
+      修复为按键（chr+pos → 探针名）映射。同时采纳官方 SNP6 规程
+      （CN/SNP 探针分类中心化、BAF=2→NA）。详见
+      `docs/abs_real_data_status.md` §0.2
+- [x] **pilot 验证**：4 个高 FGA 样本 **4/4 自动拟合**（purity
+      0.44-0.69 / ploidy 1.65-4.57；EA043 chr12 扩增恢复为 CN
+      11(9+2)/10(8+2)，与原始 logR/BAF 吻合）；单样本 72 s
 - [x] 实现 `pairwise_absolute.py`（ABS 模块：R 包装 + 比较统计 +
       manifest 分块并行）
 - [x] 绘图 `plotting/pairwise_abs.py`
 - [x] CLI 注册 + `_skip_reasons` 降级 + config schema
 - [x] 测试：合成比较统计（无 R）+ R 依赖端到端（skipif）
 - [x] 文档：README 双语、CHANGELOG、stats.md 新增 ABS 章节（含 WGD 启发式声明）
-- [ ] **全队列运行 + 敏感性**：pilot（4 样本）通过后放开 226 样本；
+- [ ] **全队列运行 + 敏感性**：待用户确认（预估 ~1-1.5 h，jobs=4）；
       `loh_frac_wgd` 0.2/0.3/0.5、启发式 A vs B 对照（机制已实现）
 
 ## 9. 开放问题

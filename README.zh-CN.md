@@ -181,7 +181,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 - P10：`permtest.cn_thr: 0.25`、`n_perm: 10000`、`stat: zprop|wald`、`max_segments: 2000`
 - PQ：无需配置（自动发现本次运行的 p 值集合）
 - PD：`diag.neutral_band: 0.25`、`smooth_windows: 20`
-- ABS：`absolute_cn.tool: ascat`、`raw_dir: raw_snp6/`、`manifest: absolute_manifest.tsv`（列：sample, cohort, logr, baf [, germline_logr, germline_baf | het_calls]；路径相对 manifest；het_calls = 样本自己的 Birdseed 基因型 AA/AB/BB，无 matched normal 时的 tumor-only het 代理）、`gc_file: ref/GC_AffySNP6_102015.txt.gz`（**SNP6 必需**——ASCAT GC 校正参考文件，Zenodo 14008443；无校正时网格搜索达不到 GoF 阈值，pilot 已验证）、`cn_thr_wgd: 3.0`、`loh_frac_wgd: 0.30`（敏感性 0.2–0.5）、`min_purity: 0.30`、`ploidy_wgd: 3.7`、`penalty: 70`、`gamma: 0.55`；表缺失但 R+ASCAT 可用时自动走管线模式（Rscript R/absolute_cn.R），否则跳过
+- ABS：`absolute_cn.tool: ascat`、`raw_dir: raw_snp6/`、`manifest: absolute_manifest.tsv`（列：sample, cohort, logr, baf [, germline_logr, germline_baf | het_calls]；路径相对 manifest；het_calls = 样本自己的 Birdseed 基因型 AA/AB/BB，无 matched normal 时的 tumor-only het 代理）、`gc_file: ref/GC_AffySNP6_102015.txt.gz`（**SNP6 必需**——ASCAT GC 校正参考文件，Zenodo 14008443；无校正时网格搜索达不到 GoF 阈值，pilot 已验证）、`max_ploidy: 8`（WGD 队列需上调，默认 5.5 会拒收）、`cn_thr_wgd: 3.0`、`loh_frac_wgd: 0.30`（敏感性 0.2–0.5）、`min_purity: 0.30`、`ploidy_wgd: 3.7`、`penalty: 70`、`gamma: 0.55`（SNP array 官方默认，勿改 1——那是测序数据的值）、`cache_dir`（两级 RDS 缓存：GC 后/ASPCF 后，参数实验降到秒级）、`jobs: 4`（分块 worker 并行）、`ncores: 4`（aspcf/runAscat 样本级 mclapply）、`r_timeout_min_per_sample: 30`；管线内置官方 SNP6 预处理（CN/SNP 探针分类 logR 中心化、BAF=2→NA）与 het 掩码按键映射（探针名/坐标，免疫 loadData 重排序）；表缺失但 R+ASCAT 可用时自动走管线模式（Rscript R/absolute_cn.R），否则跳过。修复与实测记录见 `docs/abs_real_data_status.md`
 
 ## 测试
 

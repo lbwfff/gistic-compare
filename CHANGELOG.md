@@ -5,6 +5,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **ABS — 退化拟合根因修复（gg het 掩码与 loadData 排序错位）**：
+  `ascat.loadData`（stock 与 fast 版均）把矩阵按基因组位置重排，
+  `ascat.correctLogR` 再按 GC 参考文件取交集（本队列丢失 ~4.3k 探针），
+  而 wrapper 的 het 掩码按清单/网格顺序按位置传入——het 标志随机错位，
+  BAF 分段输入变成 0/1 噪声（分段 b≈0.105 处处，真实中位 0.49），导致
+  自动拟合全败、(rho=1, psi=1.45) 角点解与 purity=1.0 的退化拟合。
+  掩码现按键（chr+pos → 探针名）映射到加载后对象的行序，并对 GC 交集
+  取并；同时修复缓存命中时 gg 块被跳过、静默切换
+  predictGermlineGenotypes 的连带 bug。修复后 4 样本高 FGA pilot
+  **4/4 自动拟合**（purity 0.44-0.69 / ploidy 1.65-4.57，无需手动回退；
+  EA043 chr12 扩增恢复为 CN 11(9+2)/10(8+2)，与原始 logR/BAF 吻合），
+  单样本墙钟 28-40 分钟 → **72 秒**（aspcf 1406 s → 24.6 s）。此前所有
+  purity=1.0 的 ABS 结果作废重算。详见 `docs/abs_real_data_status.md`。
+- ABS：pilot 规模（每队列 <3 拟合样本）时 post-pipeline 汇总对空
+  metrics 表崩溃（KeyError: comparison）——加守卫跳过。
+
+### Changed
+- **ABS — 采纳官方 SNP6 预处理规程**（ASCAT ExampleData/
+  ASCAT_fromCELfiles.R）：logR 按 CN 探针/SNP 探针**分类中心化**（本队列
+  实测类间偏移 +0.01~+0.11 log2）；**BAF=2 占位符转 NA**（CN 探针无
+  基因型，NA 为官方预期状态；NA 卫生检查相应只按 logR 丢行）。
+- ABS：新增 `--ncores`/`--max-ploidy`/`--cache-rds`（两级 RDS 缓存：
+  GC 后 / ASPCF 后，内容键控）与分阶段耗时日志（`[abs][t]`）。
+
 ### Added
 - **Modules P9/P11 (pairwise) — CNV landscape figures**:
   - **P9 arm / chromosome event-frequency figures** (`P9_arm_events`,
