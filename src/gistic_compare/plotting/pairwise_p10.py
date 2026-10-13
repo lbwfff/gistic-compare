@@ -129,7 +129,60 @@ def plot_p10_zhist(res: dict, cfg, prefix: str = "P10") -> None:
     save(fig, cfg, f"{prefix}_zhist")
 
 
+def plot_p10_freq_scatter(peaks: pd.DataFrame, cfg, prefix: str = "P10") -> None:
+    """Per-peak altered-frequency scatter, cohort A vs B (union peaks).
+
+    Dashed line = identity (slope 1); solid line = no-intercept least-
+    squares fit of the observed frequencies, annotated with its slope —
+    slope < 1 means cohort B hits the union peaks more often than A.
+    """
+    if peaks is None or peaks.empty:
+        return
+    style(cfg)
+    comps = list(dict.fromkeys(peaks["comparison"]))
+    fig, axes = plt.subplots(
+        1, len(comps), squeeze=False, sharex=False, sharey=False,
+        figsize=theme.figsize(cfg, total_w=3.4 * len(comps), panel_h=3.3))
+    for i, comp in enumerate(comps):
+        ax = axes[i, 0]
+        g = peaks[peaks["comparison"] == comp]
+        if g.empty:
+            ax.set_visible(False)
+            continue
+        for ptype in ("Amp", "Del"):
+            s = g[g["ptype"] == ptype]
+            if s.empty:
+                continue
+            ax.scatter(s["freq_a"], s["freq_b"], s=18, alpha=0.8,
+                       color=theme.ptype_color(ptype), label=ptype,
+                       edgecolors="none", zorder=3)
+        ax.plot([-0.02, 1.02], [-0.02, 1.02], color="#888888", ls="--",
+                lw=0.7, zorder=1, label="identity")
+        xv = g["freq_a"].to_numpy(float)
+        yv = g["freq_b"].to_numpy(float)
+        ok = np.isfinite(xv) & np.isfinite(yv)
+        if ok.sum() >= 3 and float((xv[ok] ** 2).sum()) > 0:
+            k = float((xv[ok] * yv[ok]).sum() / (xv[ok] ** 2).sum())
+            hi = max(float(xv[ok].max()), 0.02)
+            ax.plot([0.0, hi], [0.0, k * hi], color=theme.OKABE["orange"],
+                    lw=1.0, zorder=2, label=f"fit (slope={k:.2f})")
+            theme.annot_stat(ax, f"slope = {k:.2f}", loc="upper left",
+                             fontsize=6.5)
+        la, lb, _, _ = _sides(cfg, comp)
+        ax.set_xlim(-0.02, 1.02)
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_xlabel(f"{la}: frequency altered")
+        ax.set_ylabel(f"{lb}: frequency altered")
+        ax.set_title(f"union peaks | {comp}  (n={int(ok.sum())})",
+                     fontsize=7.5)
+        ax.legend(frameon=False, fontsize=6, loc="lower right")
+        ax.tick_params(labelsize=6)
+    theme.finalize(fig, "constrained", wspace=0.25)
+    save(fig, cfg, f"{prefix}_freq_scatter")
+
+
 def figures_p10(res: dict, cfg) -> None:
     plot_p10_volcano(res.get("peaks"), cfg)
     plot_p10_naive_vs_perm(res.get("peaks"), cfg)
     plot_p10_zhist(res, cfg)
+    plot_p10_freq_scatter(res.get("peaks"), cfg)
