@@ -5,7 +5,6 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 from ._core import *  # noqa: F401,F403
 
@@ -163,24 +162,14 @@ def plot_p10_freq_scatter(peaks: pd.DataFrame, cfg, prefix: str = "P10") -> None
         yv = g["freq_b"].to_numpy(float)
         ok = np.isfinite(xv) & np.isfinite(yv)
         if ok.sum() >= 3 and float((xv[ok] ** 2).sum()) > 0:
-            # no-intercept least squares; t-band for the mean response is
-            # proportional to x, so it fans out from the origin
+            # no-intercept least squares, drawn across the full axis range
             xa, ya = xv[ok], yv[ok]
             k = float((xa * ya).sum() / (xa ** 2).sum())
-            dfree = max(len(xa) - 1, 1)
-            s2 = float(((ya - k * xa) ** 2).sum() / dfree)
-            se_k = float(np.sqrt(s2 / (xa ** 2).sum()))
-            tcrit = float(stats.t.ppf(0.975, dfree))
-            lo_k, hi_k = k - tcrit * se_k, k + tcrit * se_k
             xx = np.array([0.0, 1.0])
-            ax.fill_between(xx, lo_k * xx, hi_k * xx,
-                            color=theme.OKABE["orange"], alpha=0.15, lw=0,
-                            zorder=1.5, label="95% CI (mean response)")
             ax.plot(xx, k * xx, color=theme.OKABE["orange"], lw=1.0,
-                    zorder=2,
-                    label=f"fit (slope={k:.2f} [{lo_k:.2f}, {hi_k:.2f}])")
-            theme.annot_stat(ax, f"slope = {k:.2f} [{lo_k:.2f}, {hi_k:.2f}]",
-                             loc="upper left", fontsize=6.5)
+                    zorder=2, label=f"fit (slope={k:.2f})")
+            theme.annot_stat(ax, f"slope = {k:.2f}", loc="upper left",
+                             fontsize=6.5)
         la, lb, _, _ = _sides(cfg, comp)
         ax.set_xlim(-0.02, 1.02)
         ax.set_ylim(-0.02, 1.02)
