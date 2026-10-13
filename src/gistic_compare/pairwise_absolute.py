@@ -85,6 +85,7 @@ def _abs_cfg(cfg: dict[str, Any], rcfg: dict) -> dict:
         gamma=float(a.get("gamma", 0.55)),
         max_ploidy=float(a.get("max_ploidy", 5.5)),
         gc_file=str(a.get("gc_file") or ""),
+        cache_dir=str(a.get("cache_dir") or ""),
         jobs=max(1, int(a.get("jobs", 4))),
         r_timeout_min_per_sample=float(a.get("r_timeout_min_per_sample",
                                              90.0)),
@@ -280,6 +281,12 @@ def _run_r_pipeline(cfg: dict[str, Any], acfg: dict,
                 if not gc_p.is_absolute():
                     gc_p = (Path(cfg["_root"]) / gc_p).resolve()
                 cmd += ["--gc-file", str(gc_p)]
+            if acfg["cache_dir"]:
+                cache_p = Path(acfg["cache_dir"])
+                if not cache_p.is_absolute():
+                    cache_p = (Path(cfg["_root"]) / cache_p).resolve()
+                cache_p.mkdir(parents=True, exist_ok=True)
+                cmd += ["--cache-rds", str(cache_p)]
             log.append(f"$ [{' '.join(cm.name.split('_chunk')[-1:])}] "
                        f"{len(part)} samples: {' '.join(cmd[1:])}\n")
             timeout = 600.0 + timeout_min * 60.0 * len(part)

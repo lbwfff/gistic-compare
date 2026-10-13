@@ -56,7 +56,10 @@
 #     [--gc-file <GC_AffySNP6_102015.txt>]
 
 suppressWarnings(suppressMessages(library(ASCAT)))
+data.table::setDTthreads(1L)  # before any fread: macOS fork safety (see
+                              # GSEdata/ASCAT/ASCAT_SNP6_优化报告.md §5.6)
 
+# ---------------------------------------------------------------------------
 args <- commandArgs(trailingOnly = TRUE)
 getarg <- function(flag, default = NULL) {
   i <- match(flag, args)
@@ -64,6 +67,39 @@ getarg <- function(flag, default = NULL) {
   default
 }
 num <- function(flag, default) as.numeric(getarg(flag, as.character(default)))
+
+# optional ASCAT fast stack (R/ascat_opt/): bit-identical optimisations of
+# the ASCAT 3.2.0 hot paths — Rcpp aspcfpart, vectorised helpers, fread
+# loader, sample-level mclapply parallelism.  Source: our own benchmarking
+# (GSEdata/ASCAT/ASCAT_SNP6_优化报告.md, identical()-verified).  Falls back
+# to stock ASCAT when the files or Rcpp are unavailable.
+# ---------------------------------------------------------------------------
+script_path <- sub("^--file=", "", grep("^--file=", commandArgs(FALSE),
+                                        value = TRUE)[1])
+opt_dir <- getarg("--ascat-opt-dir",
+                  file.path(dirname(script_path), "ascat_opt"))
+use_fast_ascat <- FALSE
+if (all(file.exists(file.path(opt_dir, c("ascat_fast.R", "aspcf_cpp.cpp",
+                                         "ascat_io_fast.R",
+                                         "ascat_parallel.R")))) &&
+    requireNamespace("Rcpp", quietly = TRUE)) {
+  tryCatch({
+    Rcpp::sourceCpp(file.path(opt_dir, "aspcf_cpp.cpp"))
+    source(file.path(opt_dir, "ascat_fast.R"), local = TRUE)
+    source(file.path(opt_dir, "ascat_io_fast.R"), local = TRUE)
+    source(file.path(opt_dir, "ascat_parallel.R"), local = TRUE)
+    patch_ascat()
+    use_fast_ascat <- TRUE
+    cat("[abs] ASCAT fast stack loaded (patch_ascat)\n")
+  }, error = function(e) {
+    cat("[abs] ASCAT fast stack failed to load (",
+        conditionMessage(e), ") — using stock ASCAT\n")
+  })
+} else {
+  cat("[abs] ASCAT fast stack not found at ", opt_dir,
+      " — using stock ASCAT\n", sep = "")
+}
+
 
 manifest_path <- getarg("--manifest")
 cohort <- getarg("--cohort")
@@ -77,6 +113,7 @@ gamma <- num("--gamma", 0.55)
 max_ploidy <- num("--max-ploidy", 5.5)
 seed <- as.integer(getarg("--seed", "42"))
 gc_file <- getarg("--gc-file")
+ncores <- as.integer(getarg("--ncores", "4"))
 cat(sprintf("[dbg] parsed max_ploidy=%s gamma=%s\n", max_ploidy, gamma))
 
 if (is.null(manifest_path) || is.null(cohort)) {
@@ -136,6 +173,21 @@ for (i in seq_along(tumor_logr)) {
   }
 }
 
+# NA hygiene (ASCAT 优化报告 §5.1): a single NA probe makes getMad() return
+# NA for its whole 1000-probe window and fastAspcf then silently SKIPS that
+# window (degenerate segmentation, no warning).  Drop NA rows here, once,
+# across logR/BAF for every sample — the het-calls grid is filtered the
+# same way further down.
+na_keep <- stats::complete.cases(do.call(
+  cbind, c(lapply(tumor_logr, `[[`, 3), lapply(tumor_baf, `[[`, 3))))
+if (!all(na_keep)) {
+  cat(sprintf("[abs] dropping %d marker row(s) with NA logR/BAF values\n",
+              sum(!na_keep)))
+  grid <- grid[na_keep, , drop = FALSE]
+  tumor_logr <- lapply(tumor_logr, function(d) d[na_keep, , drop = FALSE])
+  tumor_baf <- lapply(tumor_baf, function(d) d[na_keep, , drop = FALSE])
+}
+
 work <- file.path(out_dir, "ASCAT_input")
 dir.create(work, recursive = TRUE, showWarnings = FALSE)
 
@@ -148,6 +200,7 @@ if (!file.exists(markers_path)) {
        "scripts/prepare_abs_inputs.py")
 }
 markers <- read.delim(markers_path)
+if (!all(na_keep)) markers <- markers[na_keep, , drop = FALSE]
 if (nrow(markers) != nrow(grid) || any(markers$chr != grid[[1]]) ||
     any(markers$pos != grid[[2]])) {
   stop("markers.tsv.gz grid differs from the per-sample marker grid")
@@ -160,8 +213,6 @@ write_wide <- function(frames, path) {
   write.table(wide, path, sep = "\t", quote = FALSE, row.names = FALSE,
               na = "NA")
 }
-write_wide(lapply(tumor_logr, `[[`, 3), file.path(work, "Tumor_LogR.txt"))
-write_wide(lapply(tumor_baf, `[[`, 3), file.path(work, "Tumor_BAF.txt"))
 
 # ---------------------------------------------------------------------------
 # germline mode
@@ -192,6 +243,49 @@ if (has_germline) {
   het_source <- "birdseed_calls"
 }
 
+# ---------------------------------------------------------------------------
+# two-level RDS cache (content-keyed; the pipeline is deterministic given
+# the inputs):  d1 = post loadData + GC correction, d2 = post aspcf.
+# A d2 hit skips loadData/GC/aspcf entirely — downstream-parameter
+# experiments (gamma, max_ploidy, manual-fit logic) then cost minutes
+# instead of a full recompute.
+# ---------------------------------------------------------------------------
+cache_dir <- getarg("--cache-rds")
+use_cache <- !is.null(cache_dir) && nzchar(cache_dir)
+d1_hit <- d2_hit <- FALSE
+d1_path <- d2_path <- NULL
+if (use_cache) {
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  in_files <- c(markers_path,
+                resolve(man$logr), resolve(man$baf),
+                if (has_het) resolve(man$het_calls) else character(0),
+                if (has_germline) resolve(man$germline_logr) else character(0),
+                if (has_germline) resolve(man$germline_baf) else character(0),
+                if (!is.null(gc_file) && nzchar(gc_file))
+                  resolve(gc_file) else character(0))
+  in_files <- in_files[!is.na(in_files)]
+  keyfile <- tempfile(fileext = ".key")
+  writeLines(paste(c("abs-cn", cohort, penalty, seed,
+                     unname(tools::md5sum(in_files)))), keyfile)
+  key_hash <- unname(tools::md5sum(keyfile))
+  unlink(keyfile)
+  d1_path <- file.path(cache_dir, paste0("d1_", key_hash, ".rds"))
+  d2_path <- file.path(cache_dir, paste0("d2_", key_hash, ".rds"))
+  d1_hit <- file.exists(d1_path)
+  d2_hit <- file.exists(d2_path)
+  if (d2_hit) {
+    cat("[abs] cache hit: d2 (post aspcf) — skipping loadData/GC/aspcf\n")
+    ascat.data <- readRDS(d2_path)
+  } else if (d1_hit) {
+    cat("[abs] cache hit: d1 (post loadData+GC) — skipping loadData/GC\n")
+    ascat.data <- readRDS(d1_path)
+  }
+}
+
+if (!d2_hit) {
+write_wide(lapply(tumor_logr, `[[`, 3), file.path(work, "Tumor_LogR.txt"))
+write_wide(lapply(tumor_baf, `[[`, 3), file.path(work, "Tumor_BAF.txt"))
+
 if (has_germline) {
   germline_logr <- lapply(man$germline_logr,
                           function(p) read_marker_file(resolve(p), "logr"))
@@ -210,6 +304,9 @@ if (has_germline) {
       "tumor-only genotype inference\n")
 }
 
+if (d1_hit) {
+  ascat.data <- readRDS(d1_path)
+} else {
 ascat.data <- ascat.loadData(
   Tumor_LogR_file = file.path(work, "Tumor_LogR.txt"),
   Tumor_BAF_file = file.path(work, "Tumor_BAF.txt"),
@@ -226,6 +323,8 @@ if (!is.null(gc_file) && nzchar(gc_file)) {
   if (is.na(gc_path)) stop("GC content file not found: ", gc_file)
   cat(sprintf("[abs] GC correction: %s\n", basename(gc_path)))
   ascat.data <- ascat.correctLogR(ascat.data, GCcontentfile = gc_path)
+}
+if (use_cache) saveRDS(ascat.data, d1_path)
 }
 
 ascat.gg <- NULL
@@ -244,7 +343,10 @@ if (!has_germline && has_het) {
     }
     d[, c(i_chr[1], i_pos[1], i_val[1])]
   }
-  calls <- lapply(man$het_calls, function(p) read_call_file(resolve(p)))
+  calls <- lapply(man$het_calls, function(p) {
+    d <- read_call_file(resolve(p))
+    d[na_keep, , drop = FALSE]          # same NA-row filter as logR/BAF
+  })
   for (i in seq_along(calls)) {
     g <- calls[[i]][, 1:2]
     if (!identical(dim(g), dim(grid)) ||
@@ -268,22 +370,34 @@ if (!has_germline && has_het) {
   ascat.gg <- list(germlinegenotypes = het_mat)
 }
 
+pcf <- function(gg = NULL) {
+  args <- list(ASCATobj = ascat.data, ncores = ncores,
+               penalty = penalty, seed = seed)
+  if (!is.null(gg)) args$ascat.gg <- gg
+  do.call(if (use_fast_ascat) ascat.aspcf_parallel
+          else ascat.aspcf_sequential, args)
+}
 if (has_germline) {
-  ascat.data <- ascat.aspcf(ascat.data, penalty = penalty, seed = seed,
-                            out.dir = tempdir())
+  ascat.data <- pcf()
 } else if (!is.null(ascat.gg)) {
-  ascat.data <- ascat.aspcf(ascat.data, ascat.gg = ascat.gg,
-                            penalty = penalty, seed = seed,
-                            out.dir = tempdir())
+  ascat.data <- pcf(ascat.gg)
 } else {
   gg <- ascat.predictGermlineGenotypes(ascat.data, platform = "AffySNP6",
                                        img.dir = tempdir())
-  ascat.data <- ascat.aspcf(ascat.data, ascat.gg = gg, penalty = penalty,
-                            seed = seed, out.dir = tempdir())
+  ascat.data <- pcf(list(germlinegenotypes = gg$germlinegenotypes,
+                         failedarrays = gg$failedarrays))
 }
-ascat.output <- ascat.runAscat(ascat.data, gamma = gamma,
-                               max_ploidy = max_ploidy,
-                               img.dir = tempdir())
+if (use_cache) saveRDS(ascat.data, d2_path)
+}
+
+ras <- function(rho = NULL, psi = NULL) {
+  args <- list(ASCATobj = ascat.data, ncores = ncores, gamma = gamma,
+               max_ploidy = max_ploidy, plot = FALSE, img.dir = tempdir())
+  if (!is.null(rho)) { args$rho_manual = rho; args$psi_manual = psi }
+  do.call(if (use_fast_ascat) ascat.runAscat_parallel
+          else ascat.runAscat_sequential, args)
+}
+ascat.output <- ras()
 
 # ---------------------------------------------------------------------------
 # fallback: samples that fail the automatic grid search (ASCAT's
@@ -296,11 +410,31 @@ auto_ok <- setdiff(names(ascat.output$purity), failed)
 retry <- setdiff(man$sample, auto_ok)
 rho_vec <- rep(NA_real_, nrow(man)); psi_vec <- rep(NA_real_, nrow(man))
 names(rho_vec) <- names(psi_vec) <- man$sample
-manual_note <- NULL
+no_plots <- function() {
+  noop <- function(...) invisible(NULL)
+  for (fn in c("ascat.plotSunrise", "ascat.plotNonRounded",
+               "ascat.plotAscatProfile")) {
+    try(assignInNamespace(fn, noop, ns = "ASCAT"), silent = TRUE)
+  }
+}
+subset1 <- function(s_name) {
+  keep = which(ascat.data$samples == s_name)
+  o = ascat.data
+  o$Tumor_LogR = ascat.data$Tumor_LogR[, keep, drop = FALSE]
+  o$Tumor_BAF = ascat.data$Tumor_BAF[, keep, drop = FALSE]
+  o$Tumor_LogR_segmented =
+    ascat.data$Tumor_LogR_segmented[, keep, drop = FALSE]
+  o$Tumor_BAF_segmented = ascat.data$Tumor_BAF_segmented[keep]
+  o$samples = ascat.data$samples[keep]
+  o$gender = if (!is.null(ascat.data$gender)) ascat.data$gender[keep] else NULL
+  o$failedarrays = character(0)
+  o
+}
 if (length(retry)) {
   for (s_name in retry) {
+    s_pos = match(s_name, ascat.data$samples)
     lrrsegm = ascat.data$Tumor_LogR_segmented[, s_name]
-    bafsegm = ascat.data$Tumor_BAF_segmented[[s_name]][, , drop = FALSE]
+    bafsegm = ascat.data$Tumor_BAF_segmented[[s_pos]][, , drop = FALSE]
     if (is.null(bafsegm) || nrow(bafsegm) == 0) next
     rr = lrrsegm[rownames(bafsegm)]
     bb = as.numeric(bafsegm)
@@ -312,22 +446,61 @@ if (length(retry)) {
                                           max_ploidy = max_ploidy,
                                           min_purity = 0.1,
                                           max_purity = 1.05)
-    mind = which(dmat == min(dmat), arr.ind = TRUE)[1, ]
-    rho_vec[s_name] = as.numeric(colnames(dmat)[mind[2]])
-    psi_vec[s_name] = as.numeric(rownames(dmat)[mind[1]])
+    # scan the distance matrix with runASCAT's own model, applying its
+    # sanity bounds (recalculated ploidy window, rho >= 0.2) but NOT the
+    # percentzero / strict-local-minimum filters that reject this cohort
+    psi_pos = as.numeric(rownames(dmat))
+    rho_pos = as.numeric(colnames(dmat))
+    L = as.numeric(s_segs[, "length"])
+    sb = as.numeric(s_segs[, "b"]); sr = as.numeric(s_segs[, "r"])
+    best_m = Inf; best_rho = NA_real_; best_psi = NA_real_
+    for (i in seq_along(psi_pos)) {
+      psi_i = psi_pos[i]
+      for (j in seq_along(rho_pos)) {
+        rho_j = rho_pos[j]
+        if (rho_j < 0.2 || rho_j > 1) next
+        D = (1 - rho_j) * 2 + rho_j * psi_i
+        nA = (rho_j - 1 - (sb - 1) * 2^(sr / gamma) * D) / rho_j
+        nB = (rho_j - 1 + sb * 2^(sr / gamma) * D) / rho_j
+        ploidy_j = sum((nA + nB) * L) / sum(L)
+        if (ploidy_j < 1.5 || ploidy_j > max_ploidy) next
+        if (dmat[i, j] < best_m) {
+          best_m = dmat[i, j]
+          best_rho = rho_j; best_psi = psi_i
+        }
+      }
+    }
+    if (is.na(best_rho)) next
+    rho_vec[s_name] = best_rho
+    psi_vec[s_name] = best_psi
     cat(sprintf("[abs] manual fit %s: rho=%.2f psi=%.2f\n", s_name,
                 rho_vec[s_name], psi_vec[s_name]))
   }
   if (any(!is.na(rho_vec[retry]))) {
-    ascat.output = ascat.runAscat(ascat.data, gamma = gamma,
-                                  max_ploidy = max_ploidy,
-                                  rho_manual = rho_vec,
-                                  psi_manual = psi_vec,
-                                  img.dir = tempdir())
-    manual_note <- "manual rho/psi fit"
+    # one manual fit per failed sample, parallel over failed samples
+    # (scalar rho_manual/psi_manual — runAscat requires length == N)
+    fits = parallel::mclapply(retry, function(s_name) {
+      if (is.na(rho_vec[s_name])) return(NULL)
+      no_plots()
+      f = if (use_fast_ascat) ascat.runAscat_fast else ASCAT::ascat.runAscat
+      f(subset1(s_name), gamma = gamma, max_ploidy = max_ploidy,
+        rho_manual = rho_vec[s_name], psi_manual = psi_vec[s_name])
+    }, mc.cores = max(1L, min(ncores, length(retry))))
+    names(fits) = retry
+    for (s_name in names(fits)) {
+      r = fits[[s_name]]
+      if (is.null(r) || is.null(r$purity) || is.na(r$purity[[1]])) next
+      ascat.output$purity[s_name] = r$purity[[1]]
+      ascat.output$aberrantcellfraction[s_name] = r$purity[[1]]
+      ascat.output$ploidy[s_name] = r$ploidy[[1]]
+      ascat.output$psi[s_name] = r$psi[[1]]
+      ascat.output$goodnessOfFit[s_name] = r$goodnessOfFit[[1]]
+      ascat.output$segments = rbind(ascat.output$segments, r$segments)
+      ascat.output$failedarrays =
+        setdiff(ascat.output$failedarrays, s_name)
+    }
   }
 }
-note_extra <- if (!is.null(manual_note)) manual_note else ""
 # ---------------------------------------------------------------------------
 # per-sample harmonized metrics + WGD heuristics
 # ---------------------------------------------------------------------------
