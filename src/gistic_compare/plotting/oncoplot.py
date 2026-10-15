@@ -181,25 +181,6 @@ def _draw_heat(ax, cell: pd.DataFrame, blocks: list[dict]):
         s.set_visible(False)
 
 
-def _draw_delta(ax, frame: pd.DataFrame, cola: str, colb: str) -> None:
-    fa = frame["amp_0"].to_numpy(float) + frame["del_0"].to_numpy(float)
-    fb = frame["amp_1"].to_numpy(float) + frame["del_1"].to_numpy(float)
-    delta = fa - fb
-    yy = np.arange(len(frame))
-    ax.barh(yy, delta, height=0.8,
-            color=[cola if d > 0 else colb for d in delta], edgecolor="none")
-    lim = max(0.05, float(np.nanmax(np.abs(delta))) * 1.15) if len(frame) \
-        else 0.05
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(len(frame) - 0.5, -0.5)
-    ax.axvline(0, color="#666666", lw=0.6)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.tick_params(length=0)
-    for s in ax.spines.values():
-        s.set_visible(False)
-
-
 def _draw_right_bars(ax, frame: pd.DataFrame, blocks: list[dict],
                      cola: str, colb: str) -> None:
     """Per-locus stacked amp/del frequencies, one thin bar per cohort."""
@@ -251,6 +232,7 @@ def plot_oncoplot(onco: dict[str, Any], cfg: dict[str, Any]) -> None:
     lb = blocks[1]["label"]
     cola = pal.get(onco["a"], "#555555")
     colb = pal.get(onco["b"], "#777777")
+    blocks = [dict(b) for b in blocks]      # local copy: do not mutate input
     for b in blocks:
         b["_n"] = len(b["columns"])
 
@@ -269,27 +251,37 @@ def plot_oncoplot(onco: dict[str, Any], cfg: dict[str, Any]) -> None:
                 f"  ({r['chrom']}:{int(r['start']) // 10**6}Mb)"
         labels.append(base)
 
-    strip_h, header_h, note_h = 0.85, 0.46, 0.80
+    # waterfall: inside each cohort block the samples *without* the top
+    # locus come first (left) and the altered ones last (right); ties are
+    # ordered by total calls descending so the shapes fall off smoothly
+    calls_per_sample = cell.gt(0).sum(axis=0)
+    top_hit = cell.iloc[0].gt(0)
+    for b in blocks:
+        cols = [c for c in b["columns"] if c in cell.columns]
+        cols = sorted(cols, key=lambda c: (
+            not bool(top_hit.get(c, False)), -float(calls_per_sample.get(c, 0))))
+        b["columns"] = cols
+        b["_n"] = len(cols)
+    cell = cell.loc[:, [c for b in blocks for c in b["columns"]]]
+
+    strip_h, header_h, note_h = 0.85, 0.46, 0.0
     heat_h = 0.34 * len(frame) + 0.45
     fig_h = strip_h + header_h + note_h + heat_h
     fig = plt.figure(figsize=(theme.capped_width(cfg, 7.0), fig_h))
     gs = fig.add_gridspec(
-        2, 3, width_ratios=[1, 0.14, 0.34], wspace=0.05,
+        2, 2, width_ratios=[1, 0.36], wspace=0.05,
         height_ratios=[strip_h, heat_h],
         top=1.0 - header_h / fig_h, bottom=note_h / fig_h,
         left=0.19, right=0.97)
     ax_top = fig.add_subplot(gs[0, 0])
     ax = fig.add_subplot(gs[1, 0])
-    ax_d = fig.add_subplot(gs[1, 1])
-    ax_b = fig.add_subplot(gs[1, 2])
+    ax_b = fig.add_subplot(gs[1, 1])
 
     _draw_top_strip(ax_top, cell, blocks)
     _draw_heat(ax, cell, blocks)
     ax.set_yticks(range(len(frame)))
     ax.set_yticklabels(labels, fontsize=5)
-    _draw_delta(ax_d, frame, cola, colb)
     _draw_right_bars(ax_b, frame, blocks, cola, colb)
-    ax_d.set_xlabel("\u0394freq", fontsize=6, labelpad=1)
 
     x = 0
     for b in blocks:
@@ -306,18 +298,6 @@ def plot_oncoplot(onco: dict[str, Any], cfg: dict[str, Any]) -> None:
              f"(top-{len(frame)} peak loci by combined frequency)",
              fontsize=7.5, fontweight="bold", color="#111111",
              va="top", ha="left")
-    notes = [
-        f"{la} vs {lb} \u2014 union peak loci (an overlapping amp + del "
-        "chain pair shares one row).",
-        "vermillion = amplified, blue = deleted, white = no alteration "
-        "*or* no peak called there (not distinguished).",
-        "top strip = calls/sample;  right bars = per-cohort amp/del "
-        "fraction (edge = cohort colour);  \u0394freq (A \u2212 B) in "
-        "cohort colours",
-    ]
-    for i, line in enumerate(notes):
-        fig.text(0.19, (note_h - 0.16 * (i + 1)) / fig_h, line,
-                 fontsize=5.2, color="#555555", va="top")
     save(fig, cfg, name)
 
 
