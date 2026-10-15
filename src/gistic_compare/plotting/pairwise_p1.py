@@ -432,5 +432,7 @@ def figures_p1(res: dict, cfg) -> None:
     plot_p1_delta_track(res.get("delta_grid"), cfg)
     from .oncoprint import figures_oncoprint
     figures_oncoprint(res, cfg)
+    from .oncoplot import figures_oncoplot as _figures_oncoplot
+    _figures_oncoplot(res, cfg)
 
 

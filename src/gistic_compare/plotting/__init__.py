@@ -26,6 +26,8 @@ from .entry_benchmark import (  # noqa: F401
 from .entry_g import figures_g  # noqa: F401
 from .gs import *  # noqa: F401,F403
 from .gs import figures_gs  # noqa: F401
+from .oncoplot import figures_oncoplot, plot_oncoplot  # noqa: F401
+from .oncoprint import *  # noqa: F401,F403
 from .oncoprint import figures_oncoprint, plot_oncoprint  # noqa: F401
 from .pairwise_abs import *  # noqa: F401,F403
 from .pairwise_abs import figures_abs  # noqa: F401

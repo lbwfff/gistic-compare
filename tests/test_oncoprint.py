@@ -65,3 +65,47 @@ def test_build_onco_data_empty_q(synth_root, pairwise_config):
     assign_comparison_kinds(cfg, data)
     onco = build_onco_data(cfg, data, 1e-12)
     assert onco == []
+
+
+def test_oncoplot_loci_merge_and_ranking(pairwise_config, tmp_path):
+    """OncoPlot rows: overlapping amp + del chains merge into one locus;
+    rows rank by combined frequency; per-cohort stacked bars; figure."""
+    from gistic_compare import io_gistic
+    from gistic_compare.config import assign_comparison_kinds, load_config
+    from gistic_compare.pairwise_peak import build_onco_data
+    from gistic_compare.plotting.oncoplot import (
+        _locus_table,
+        _merge_loci,
+        plot_oncoplot,
+    )
+
+    cfg = load_config(pairwise_config)
+    data = io_gistic.load_all(cfg)
+    assign_comparison_kinds(cfg, data)
+    o = build_onco_data(cfg, data, cfg["analysis"]["q_thresholds"][0])[0]
+
+    groups = _merge_loci(o["meta"])
+    # union chains are type-consistent: a multi-key group is a merged
+    # amp + del locus, and every single peak belongs to exactly one group
+    assert sum(len(g) for g in groups) == len(o["meta"])
+    blocks = o["blocks"]
+    for b in blocks:
+        b["_n"] = len(b["columns"])
+    frame = _locus_table(o["meta"], o["matrix"], blocks)
+    assert len(frame) == len(groups)
+    assert frame["mixed"].sum() == sum(1 for g in groups if len(g) > 1)
+    assert frame["freq_union"].is_monotonic_decreasing
+    for col in ("amp_0", "del_0", "amp_1", "del_1", "n_0", "n_1", "cell"):
+        assert col in frame.columns
+    # per-cohort frequencies are counts / cohort size
+    agg = frame[[c for c in frame.columns if c.startswith(("amp_", "del_"))]]
+    assert agg.to_numpy().min() >= 0 and agg.to_numpy().max() <= 1
+    assert (frame["amp_0"] - frame["n_amp_0"] / frame["n_0"]).abs().max() \
+        < 1e-12
+    assert (frame["del_1"] - frame["n_del_1"] / frame["n_1"]).abs().max() \
+        < 1e-12
+
+    plot_oncoplot(o, cfg)
+    name = "P1_oncoplot_a_vs_b"
+    for ext in ("png", "pdf"):
+        assert (cfg["output"]["_figures"] / f"{name}.{ext}").exists()

@@ -72,6 +72,33 @@ call a peak — distinct from "called, no alteration"). The right-hand strip
 shows Δfreq (A − B) in cohort colours, treating a missing peak as frequency 0
 (stated in the figure footnote). Cohort labels carry n.
 
+## OncoPlot (P1, `P1_oncoplot`)
+
+The *OncoPlot* is the ComplexHeatmap-flavoured sibling of the OncoPrint: one
+peak row per genomic **locus**, the two cohorts' samples side by side.
+
+- **Rows = union peak loci.** Since the P1 chains are type-consistent, an
+  Amplification and a Deletion chain whose intervals overlap (reciprocal
+  ≥ 50 % of the shorter) are merged into one locus row, so a single peak can
+  carry both the Amp and the Del alteration state (a merged row is labelled
+  `band+` with its coordinate). Rows are ranked by *combined* alteration
+  frequency (amp+del over both cohorts) and only the **top 10** are drawn
+  (`plotting/oncoplot.py::_TOP_ROWS`).
+- **Cells** = alteration state only: vermillion = amplified, blue = deleted,
+  white = no alteration **or** no peak called there (the two are deliberately
+  not distinguished — unlike the OncoPrint, there is no grey third state).
+- **Right** = one thin stacked bar per cohort (amp over del) with an edge in
+  the cohort colour, and the combined frequency printed beside it; Δfreq
+  (A − B) stays as its own strip.
+- **Top** = per-sample *calls* strip (amp stacked over del), the SCNA
+  analogue of a mutation OncoPlot's TMB track, and the
+  "**Altered in k (p%) of n**" header that ComplexHeatmap prints.
+- **Column order**: cohort A's samples block then cohort B's, a white
+  separator between the blocks; within a block the current builder's order is
+  kept (no burden-based column sorting yet).
+
+
+
 ## CNV-landscape panels (P9 event frequencies, P11 focal landscape)
 
 These two figure families share one convention that is the **reverse of the
