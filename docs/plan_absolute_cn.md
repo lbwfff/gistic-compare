@@ -61,8 +61,9 @@ CN/WGD）→ 队列间比较统计。回答的问题：
 ### 4.1 语言集成模式
 
 Python 包装 + `subprocess` 调 `Rscript R/absolute_cn.R`。否决 rpy2（依赖
-脆弱）。R 环境/包缺失时模块 **skip with reason**——与 P8 缺 sklearn、P5 缺
-D 矩阵的处理一致。R 依赖：`ASCAT`（GitHub VanLoo-lab/ascat，≥3.x）。
+脆弱）。R 环境/包缺失时模块 **skip with reason**——与 P8 缺 sklearn、P4 的
+marker 层缺 `D.cap1.5.mat` 的处理一致。R 依赖：`ASCAT`（GitHub
+VanLoo-lab/ascat，≥3.x）。
 
 ### 4.2 CLI 与配置
 

@@ -102,7 +102,7 @@ and *"which signals are specific to my experiment?"*.
 | F | experiment-specific signal fraction (vs control), 4 weightings |
 | G | benchmark against a **reference panel** (numbers externalized to `presets/reference_panels/*.yaml`; disabled unless configured) |
 
-### pairwise (modules P1–P11, PQ, PD, CF, GS, ABS) — cohort vs cohort, no control
+### pairwise (modules P1–P4, P6–P11, PQ, PD, CF, GS, ABS) — cohort vs cohort, no control
 
 | ID | question | basis |
 |---|---|---|
@@ -208,7 +208,7 @@ Modules run independently; one failing module does not abort the rest
 git clone https://github.com/lbwfff/gistic-compare
 cd gistic-compare
 pip install -e ".[dev]"
-pytest          # 97 tests: parsing/config/intervals/stats + end-to-end runs
+pytest          # 100+ tests: parsing/config/intervals/stats + end-to-end runs
                 # on synthetic GISTIC data + per-module tests; the ABS
                 # R/ASCAT pipeline tests skip cleanly without Rscript+ASCAT
 ruff check src tests

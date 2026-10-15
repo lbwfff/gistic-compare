@@ -94,8 +94,9 @@ P4 空模型等 —— 如曾引用旧版 P10 的 `p_perm`/`q_perm`/`burden_flag
    marker 0 开始时注入未初始化内存。已用真实 `D.cap1.5.mat` 验证 ir/jc 为 0 基 ✓，
    但 tests/synth 同样写 0 基（循环验证）→ 建议保留一份真实文件布局断言或 fixture。
 4. **加权口径**：`marker_matrix.marker_window_matrix` 的窗口均值是**标记数加权**，
-   P4 `_window_values` 是**长度加权**，而 `pairwise_marker` 声称两者"directly
-   comparable"。→ 统一或改措辞。
+   P4 `_window_values` 是**长度加权**，而 P4 marker 层（`pairwise_regional`
+   模块 docstring，原 `pairwise_marker`）称两者 "directly comparable"。
+   → 统一或改措辞。
 5. **`pairwise_regional._load_refgene` 不做 chr 前缀归一**（`_load_cytobands` 做）：
    GISTIC `.mat` 里 `rg.chr` 为裸数字时 refgene 全部丢失、静默回退到 GISTIC 基因
    表。→ 与 `_load_cytobands` 同样归一。
@@ -148,7 +149,8 @@ key 下贡献多行，`n_samples = len(y)` 把行数当样本数，独立性假�
    被静默忽略（与 CLI 帮助的"输出覆盖"语义相反）。→ 明确优先级并写入帮助文本。
 3. `config.build_comparisons` 的 `all_pairs` 只检查 a→b 方向的 `paired_with`，
    `expB: {paired_with: expA}` 静默产生 unpaired。→ 双向检查。
-4. `cli` 帮助文本仍写 "pairwise: P1-P5"（实际 P1–P10、PQ、PD、CF、GS）。
+4. ~~`cli` 帮助文本仍写 "pairwise: P1-P5"~~ **已修复**（见 `CHANGELOG.md`
+   [Unreleased]）：现为 `benchmark: A-G vs control; pairwise: P1-P4, P6-P11`。
 5. `run_manifest.git_commit` 在进程 CWD 而非配置/项目目录执行 git —— 可能记录
    无关仓库的 commit。
 
@@ -181,7 +183,8 @@ key 下贡献多行，`n_samples = len(y)` 把行数当样本数，独立性假�
 ### [ ] D2. 性能（按收益排序）
 1. **参考表缓存**：`pairwise_regional._load_band_genes`/`_genes_by_band`（~4 万
    基因的 Python 循环）被 8 个模块各调一次，无缓存 → `lru_cache`（按 path/mtime）。
-2. **marker matrix 运行内缓存**：1.6M 标记的 HDF5 在 P5/P7/P8/P9/GS 中被反复解析
+2. **marker matrix 运行内缓存**：1.6M 标记的 HDF5 在 P4 的 marker 层（P5_*）、
+   P7/P8/P9/GS 中被反复解析
    （`_matrix_for_cohort` + `_sample_ids_for` 各一次）→ 按路径缓存，顺带消除双读
    的顺序契约隐患。
 3. `novelty._aggregate_gscore`：O(peaks × scores) 全表扫描 → 按 (type, chrom)

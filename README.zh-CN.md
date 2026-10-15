@@ -5,7 +5,7 @@
 | workflow | 模块 | 拓扑 | 用途 |
 |---|---|---|---|
 | **benchmark**（默认） | A–G | 星型：各实验 vs 对照 | 评估实验表现、相对对照的特有信号 |
-| **pairwise** | P1–P10, PQ, PD, CF, GS, ABS | 两两实验比较（无对照） | P1–P3 检出/一致性（基于 GISTIC 峰/调用），P4/P5 区域级组间差异（P4 用 CBS 分段、P5 用 GISTIC marker 矩阵），P6 臂级 broad 景观，P7 altered 内部幅度，P8 多变量整体可分性，P9 三级负荷+wGII，P10 负担受控逐峰置换，PQ p 值质检，PD 批次/基线诊断，CF 混杂敏感性，GS 振幅差分，ABS 绝对拷贝数扩展（ASCAT，需原始数据，缺失自动跳过） |
+| **pairwise** | P1–P4、P6–P11, PQ, PD, CF, GS, ABS | 两两实验比较（无对照） | P1–P3 检出/一致性（基于 GISTIC 峰/调用），P4 区域级组间差异（CBS 分段 + GISTIC marker 矩阵两层），P6 臂级 broad 景观，P7 altered 内部幅度，P8 多变量整体可分性，P9 三级负荷+wGII，P10 负担受控逐峰置换，P11 焦点 q 值全景图，PQ p 值质检，PD 批次/基线诊断，CF 混杂敏感性，GS 振幅差分，ABS 绝对拷贝数扩展（ASCAT，需原始数据，缺失自动跳过） |
 
 ## 安装
 
@@ -45,7 +45,7 @@ gistic-compare --config my_config.yaml --modules P1,P4 --outdir out/
 | `<prefix>.tumors.seg` | E, P4, P6, PD（臂级调用/基线）、P7–P9（回退） |
 | `<prefix>.sample_seg_counts.txt` | E, P10（样本 QC） |
 | `<prefix>.regions_track.conf_90.bed` | A（校验） |
-| `<prefix>.D.cap1.5.mat` | P5, GS, P7–P9（可选） |
+| `<prefix>.D.cap1.5.mat` | P4 的 marker 层、GS、P7–P9（可选） |
 | `<prefix>.broad_values_by_arm.txt` | P6（可选；缺失时由 seg 推导） |
 | `<prefix>.amp_qv.conf_90.txt` / `.del_qv.conf_90.txt` | P6（可选，仅展示） |
 
@@ -115,7 +115,7 @@ hg19 的 cytoband 与 refgene 精简表随包分发（`src/gistic_compare/data/r
 python scripts/build_refs.py --mat /path/to/hg19.mat
 ```
 
-config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到各队列的 `<prefix>.D.cap1.5.mat`（GISTIC 自己产生）；缺失时 P5/GS 自动跳过并提示，P7–P9 回退到 seg 推导的窗口值。
+config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P4 的 marker 层、GS、P7–P9 用到各队列的 `<prefix>.D.cap1.5.mat`（GISTIC 自己产生）；缺失时 marker 层与 GS 自动跳过并提示（可用 `analysis.regional.marker_matrix: false` 显式关闭），P7–P9 回退到 seg 推导的窗口值。
 
 ## 模块
 
@@ -125,23 +125,23 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 |----|------|
 | A | 峰区间 overlap、Jaccard、q/freq 相关 + bootstrap CI、置换 null、共有峰成员表 |
 | B | scores.gistic → 1 Mb 网格重采样、轨迹相关热图、top 差异 bin |
-| C | 配对样本 0/1/2 调用一致率 / Kappa / McNemar（仅 paired）；频率相关 |
+| C | 配对样本 0/1/2 调用一致率 / Kappa / McNemar；频率相关 —— 与 pairwise 的 **P2 是同一实现、两个表前缀** |
 | D | 基因 / cytoband 集合 Jaccard、driver presence（Amp≤30Mb / Del≤10Mb） |
 | E | 每样本 FGA、segment QC、组间检验 |
 | F | 实验特有信号占比（vs 对照）：count / freq / −log10(q) / G-score 四种权重 |
 | G | 对照参考面板打分（**数值来自 preset**；未配置则跳过） |
 
-### pairwise（P1–P10, PQ, PD, CF, GS, ABS）
+### pairwise（P1–P4、P6–P11, PQ, PD, CF, GS, ABS）
 
 > **定位区分**：P1–P3 回答**检出/一致性**——「两队列各自显著（GISTIC 峰）之后，峰清单/调用是否重合」，不是组间差异检验；低幅度/宽/低频的组间差异天生成不了峰。**P4–P7** 回答**组间差异**——「两队列在同一区域的 CN 分布是否不同」，不依赖 GISTIC 峰（P7 的 peak 层除外）。P8 是全局多变量摘要，**P9 是所有逐位点结果的前置背景层**，**P10 是负担受控的峰检验**，**PQ/PD 是质量闸门**（膨胀与批次/基线诊断）。
 
 | ID | 定位 | 内容 |
 |----|------|------|
 | **P1** | 检出/一致性 | 匹配对 + Δq/Δfreq、单侧特有峰、三层 tier Jaccard、UpSet、逐样本 **OncoPrint**(union 峰 0/1/2 调用) |
-| **P2** | 检出/一致性 | 样本级调用一致（仅 paired）：exact agreement、weighted κ、McNemar+FDR；unpaired 自动跳过 |
+| **P2** | 检出/一致性 | 调用一致（**paired** 才有）：exact agreement、weighted κ、McNemar+FDR；**frequency 层对所有比较都有定义**（unpaired 也出匹配对频率表+散点图）。与 benchmark 的 C 是同一份实现、两个表前缀 |
 | **P3** | 建模 | 逐峰 `altered ~ cohort [+ 单协变量]` logistic、BH-FDR；无 meta 跳过 |
 | **P4** | **组间差异（CBS 分段）** | `tumors.seg` 切固定窗（默认 1 Mb）→ 二值化 → Fisher + MW + FDR、区域合并、null 校准、**最小可检出差异（MDE）表** |
-| **P5** | **组间差异（marker 矩阵）** | 与 P4 同构，输入换成 `D.cap1.5.mat` 重采样到同一网格 |
+| P4（marker 层） | **组间差异（marker 矩阵）** | 同一套窗口管线的第二个数据源，输入换成 `D.cap1.5.mat`，输出 `P5_*` 表（`analysis.regional.marker_matrix: false` 可关闭）；原模块 P5 |
 | **P6** | **臂级 broad 景观** | 每臂 Amp/Del 频率差 + Fisher/FDR、每样本非整倍体评分（broad 事件数/臂占比）+ MW；输入优先 `broad_values_by_arm.txt`，缺失时按 seg 推导（来源记录在表内） |
 | **P7** | **altered 内部幅度** | 频率（Fisher）与**altered 样本内部的幅度**（MW + rank-biserial）双轴：高幅度比例（≥0.9）、freq×amp 四象限分类（freq_driven / amp_driven / both / neither）；窗口/band（D 矩阵）+ peak（all_lesions `- CN values` 行）三层 |
 | **P8** | **多变量整体可分性** | PERMANOVA（伪 F + 置换 p，配对设计层内置换）、PCA、交叉验证 AUC（L2/弹性网 + 置换零分布）、bootstrap 稳定性选择；特征默认 1 Mb 窗（与峰检出无关），union peaks 模式有循环偏倚仅作描述 |
@@ -153,7 +153,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 | **CF** | 混杂敏感性 | 只读 P4/P5 表 + 每队列边际分布：E-value、最小解释效应 δ*、偏差上界/去偏下界（**定界**而非校正） |
 | **GS** | 振幅差分 | 逐窗/逐 band G-score 组间差 + 置换检验（normal 或 MC） |
 
-**统计引用层级（P4/P5）**：逐窗 FDR 仅探索（1 Mb 窗高度相关）；**cytoband 级**为预设单元、较严谨；**`*_paper_loci`（preset 位点）**为先验假设检验、可确证性引用；`*_differential_regions` 有选择偏差，仅候选。
+**统计引用层级（P4 及其 marker 层，表前缀 P4_/P5_）**：逐窗 FDR 仅探索（1 Mb 窗高度相关）；**cytoband 级**为预设单元、较严谨；**`*_paper_loci`（preset 位点）**为先验假设检验、可确证性引用；`*_differential_regions` 有选择偏差，仅候选。
 
 **CF 假设与简化**：只有每队列边际 → 只能**定界**；二值混杂偏差上界 `|Δp|·δ`、`δ* = D/Δp`，超过 `plausible_max_binary`（默认 0.20）判稳健；age 仅中位数近似；多混杂可加保守近似；EGFR/KRAS/TP53 可能是中介/碰撞变量，过校正风险。
 
@@ -186,7 +186,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P5/GS/P7–P9 用到�
 ## 测试
 
 ```bash
-pytest        # 97 个测试：解析/配置/区间/统计 + 两条 workflow 端到端（合成数据）+ 各模块单测；
+pytest        # 100+ 个测试：解析/配置/区间/统计 + 两条 workflow 端到端（合成数据）+ 各模块单测；
               # ABS 的 R/ASCAT 管线测试在无 Rscript/ASCAT 时自动跳过
 ruff check src tests
 ```
