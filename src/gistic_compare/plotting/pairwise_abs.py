@@ -18,9 +18,9 @@ def plot_abs_wgd(wgd: pd.DataFrame, cfg) -> None:
     style(cfg)
     main = wgd[~wgd["comparison"].str.contains("high-purity", na=False)]
     comps = list(dict.fromkeys(main["comparison"]))
-    nrows, _ = theme.grid_shape(len(comps), max_cols=2)
-    fig, axes = plt.subplots(nrows, 2, figsize=theme.figsize(
-        cfg, panel_h=2.6, total_w=6.2), squeeze=False)
+    nrows, ncols = theme.grid_shape(len(comps), max_cols=2)
+    fig, axes = plt.subplots(nrows, ncols, figsize=theme.figsize(
+        cfg, panel_h=2.6, total_w=6.2 if ncols == 2 else 3.5), squeeze=False)
     axes = axes.ravel()
     for k, comp in enumerate(comps):
         ax = axes[k]
@@ -94,7 +94,7 @@ def plot_abs_metric_dists(metrics: pd.DataFrame, scores: pd.DataFrame, cfg
                     theme.annot_stat(
                         ax, theme.fmt_p(float(pv)
                                         if np.isfinite(pv) else None),
-                        loc="upper left", fontsize=6.0)
+                        loc="top center", fontsize=6.0)
             ax.set_title(label, fontsize=6.8)
             ax.tick_params(labelsize=6)
             ax.grid(axis="y", alpha=0.2)
@@ -173,6 +173,7 @@ def plot_wgd_class_stacked(cn_tables: dict, cfg) -> None:
     cohs = list(cn_tables.keys())
     fig, axes = plt.subplots(1, 2, figsize=theme.figsize(
         cfg, total_w=6.4, panel_h=3.3))
+    bar_w = 0.72                       # tighter gap between the two cohorts
 
     ax = axes[0]
     cats = ["0x", "1x", ">=2x"]
@@ -183,7 +184,7 @@ def plot_wgd_class_stacked(cn_tables: dict, cfg) -> None:
     for c in cats:
         v = frac[c].to_numpy()
         ax.bar(range(len(cohs)), v, bottom=bottom, color=_WGD_CLASS_COLORS[c],
-               width=0.62, label=_WGD_CLASS_LABEL[c], edgecolor="white",
+               width=bar_w, label=_WGD_CLASS_LABEL[c], edgecolor="white",
                linewidth=0.5)
         for i, (vv, bb) in enumerate(zip(v, bottom)):
             if vv > 0.04:
@@ -201,8 +202,8 @@ def plot_wgd_class_stacked(cn_tables: dict, cfg) -> None:
     ax.set_ylim(0, 1.0)
     ax.set_title(f"Strict (nMinor$\\geq$2 signature)  "
                  f"$\\chi^2$={chi2:.2f}, p={p_chi:.2f}", fontsize=7.5)
-    ax.legend(frameon=False, fontsize=6, loc="upper right")
     ax.tick_params(labelsize=6.5)
+    handles, labels = ax.get_legend_handles_labels()
 
     ax = axes[1]
     cats2 = ["WGD-", "WGD+"]
@@ -214,7 +215,7 @@ def plot_wgd_class_stacked(cn_tables: dict, cfg) -> None:
     for c in cats2:
         v = frac2[c].to_numpy()
         ax.bar(range(len(cohs)), v, bottom=bottom, color=cols2[c],
-               width=0.62, label=c, edgecolor="white", linewidth=0.5)
+               width=bar_w, label=c, edgecolor="white", linewidth=0.5)
         for i, (vv, bb) in enumerate(zip(v, bottom)):
             if vv > 0.04:
                 ax.text(i, bb + vv / 2, f"{vv:.0%}\n({tab2[c].iloc[i]})",
@@ -229,13 +230,16 @@ def plot_wgd_class_stacked(cn_tables: dict, cfg) -> None:
     ax.set_ylim(0, 1.0)
     ax.set_title(f"Loose (incl. ambiguous (2,1) segs)  Fisher p={p_f:.2f}",
                  fontsize=7.5)
-    ax.legend(frameon=False, fontsize=6, loc="upper right")
     ax.tick_params(labelsize=6.5)
 
     total = sum(len(t) for t in cn_tables.values())
     fig.suptitle(f"WGD status by cohort (assessable samples only, n={len(d)}; "
                  f"excluding {total - len(d)} purity=1.0 non-informative)",
                  fontsize=8)
+    # single shared legend to the right of both panels: a panel-internal
+    # legend sits on group B's stacked bar at this bar count
+    fig.legend(handles, labels, loc="outside center right", frameon=False,
+               fontsize=6.5, title="WGD class", title_fontsize=6.5)
     theme.finalize(fig, "constrained", wspace=0.25)
     save(fig, cfg, "WGD_class_stacked")
 
@@ -250,9 +254,6 @@ def plot_ploidy_rank(cn_tables: dict, cfg) -> None:
     cohs = list(cn_tables.keys())
     fig, ax = plt.subplots(figsize=theme.figsize(cfg, total_w=4.0,
                                                  panel_h=3.4))
-    for i, c in enumerate(cohs):
-        ax.axvspan(i - 0.40, i + 0.40, color="#D9D9D9" if i % 2 else "white",
-                   zorder=0)
     for i, c in enumerate(cohs):
         g = d[d["cohort"] == c].sort_values("ploidy_abs").reset_index(
             drop=True)
@@ -362,5 +363,3 @@ def figures_abs(res: dict, cfg) -> None:
         hrd = None
     if hrd is not None and len(hrd):
         plot_hrd_dists(hrd, cfg)
-    plot_wgd_class_stacked(res.get("cn_tables"), cfg)
-    plot_ploidy_rank(res.get("cn_tables"), cfg)

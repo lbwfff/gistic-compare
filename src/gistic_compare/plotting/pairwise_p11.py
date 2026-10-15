@@ -136,12 +136,19 @@ def plot_p11_focal_landscape(scores: dict, peaks: pd.DataFrame | None, cfg,
     ax_a.set_ylabel("Amp\nq value", fontsize=7)
     ax_d.set_ylabel("Del\nq value", fontsize=7)
 
-    # chromosome labels between the panels (top axis carries them)
+    # chromosome strip between the panels: the ticks belong to the *del*
+    # panel's top edge (pointing into it, like a GISTIC landscape strip) and
+    # its bottom edge carries nothing at all
     bnds = _chrom_bounds(d[cohorts[0]])
     ax_a.set_xticks([b for b, _ in bnds])
     ax_a.set_xticklabels([c.replace("chr", "") for _, c in bnds], fontsize=5)
-    ax_a.tick_params(axis="x", labelbottom=True, bottom=True, top=False)
-    ax_d.tick_params(axis="x", labelbottom=False, bottom=False, top=False)
+    ax_a.tick_params(axis="x", bottom=False, labelbottom=False, top=False,
+                     labeltop=False)
+    ax_d.xaxis.set_ticks_position("top")
+    ax_d.tick_params(axis="x", labeltop=True, labelbottom=False, top=True,
+                     bottom=False, direction="in")
+    ax_d.spines["top"].set_visible(True)
+    ax_d.spines["bottom"].set_visible(False)
 
     # peak-gene labels: strongest union peaks below the threshold
     if peaks is not None and not peaks.empty and "gene" in peaks.columns:

@@ -130,12 +130,19 @@ def finalize(fig: plt.Figure, layout: str = "tight", **kwargs) -> None:
 
 def annot_stat(ax: plt.Axes, text: str, loc: str = "upper left",
                fontsize: float = 6.5, **kw) -> None:
-    """Place a statistics string at a fixed corner of the axes."""
+    """Place a statistics string at a fixed corner of the axes.
+
+    ``loc`` is one of the four corners, ``"top center"`` (inside the axes,
+    centred horizontally — used on grouped distribution panels where a
+    corner annotation would sit on one cohort's points), ``"upper left"`` or
+    ``"lower right"`` shortcuts.
+    """
     anchors = {
         "upper left": (0.03, 0.97, "top", "left"),
         "upper right": (0.97, 0.97, "top", "right"),
         "lower left": (0.03, 0.03, "bottom", "left"),
         "lower right": (0.97, 0.03, "bottom", "right"),
+        "top center": (0.5, 0.97, "top", "center"),
     }
     x, y, va, ha = anchors[loc]
     ax.text(x, y, text, transform=ax.transAxes, ha=ha, va=va,

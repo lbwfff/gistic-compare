@@ -58,7 +58,7 @@ def plot_p9_dists(scores: pd.DataFrame, tests: pd.DataFrame, cfg) -> None:
                     theme.annot_stat(
                         ax, theme.fmt_p(float(pv)
                                         if np.isfinite(pv) else None),
-                        loc="upper left", fontsize=6.0)
+                        loc="top center", fontsize=6.0)
             ax.set_title(label, fontsize=6.8)
             ax.tick_params(labelsize=6)
             ax.grid(axis="y", alpha=0.2)
