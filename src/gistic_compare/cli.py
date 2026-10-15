@@ -24,10 +24,8 @@ from . import (  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402
     pairwise_amplitude,
     pairwise_arm,
     pairwise_burden,
-    pairwise_calls,
     pairwise_diag,
     pairwise_focal,
-    pairwise_marker,
     pairwise_model,
     pairwise_multivariate,
     pairwise_peak,
@@ -58,14 +56,12 @@ BENCHMARK_MODULES = {
 PAIRWISE_MODULES = {
     "P1": ("peak set differences (detection)", pairwise_peak.run_module_p1,
            plotting.figures_p1),
-    "P2": ("sample call concordance (detection)", pairwise_calls.run_module_p2,
+    "P2": ("sample call concordance (detection)", sample_calls.run_module_p2,
            plotting.figures_p2),
     "P3": ("per-peak altered ~ covariate", pairwise_model.run_module_p3,
            plotting.figures_p3),
-    "P4": ("regional between-cohort difference", pairwise_regional.run_module_p4,
-           plotting.figures_p4),
-    "P5": ("regional diff on GISTIC marker matrix", pairwise_marker.run_module_p5,
-           plotting.figures_p5),
+    "P4": ("regional between-cohort difference (seg + GISTIC marker matrix)",
+           pairwise_regional.run_module_p4, plotting.figures_p4),
     "P6": ("arm-level broad landscape", pairwise_arm.run_module_p6,
            plotting.figures_p6),
     "P7": ("amplitude among altered samples", pairwise_amplitude.run_module_p7,
@@ -104,7 +100,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--workflow", choices=["benchmark", "pairwise"],
                     default=None,
                     help="override the workflow from the config "
-                         "(benchmark: A-G vs control; pairwise: P1-P11)")
+                         "(benchmark: A-G vs control; pairwise: "
+                         "P1-P4, P6-P11)")
     ap.add_argument("--modules", default=None,
                     help="comma-separated module IDs (default: all)")
     ap.add_argument("--all", action="store_true", help="run all modules "
@@ -137,7 +134,6 @@ def _skip_reasons(cfg: dict) -> dict[str, str]:
         reasons["G"] = ("no reference panel configured "
                         "(paper_benchmark.enabled + panel)")
     if cfg["workflow"] == "pairwise" and not _marker_files_ok(cfg):
-        reasons["P5"] = "marker matrix (D.cap1.5.mat) missing in some cohort"
         reasons["GS"] = "marker matrix (D.cap1.5.mat) missing in some cohort"
     return reasons
 

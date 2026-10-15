@@ -1,7 +1,8 @@
 # Preset loci set — EXAMPLE
 #
-# Named genomic loci (tested in P4/P5 "paper_loci" tables and annotated on
-# figures) plus bookmarked cytobands (bold/red labels on the P4/P5 heatmap).
+# Named genomic loci (tested in P4's paper_loci tables, seg and marker
+# layers, and annotated on
+# the figures) plus bookmarked cytobands (bold/red labels on the P4 heatmap).
 # This example is the four ethnic-specific loci from the WE-vs-EA NSCLC study
 # this package was developed against.  Enable it in your config:
 #

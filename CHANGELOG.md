@@ -35,6 +35,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   metrics 表崩溃（KeyError: comparison）——加守卫跳过。
 
 ### Changed
+- **Modules P4/P2 merged with their duplicated counterparts** — 23 module IDs
+  → 21 (two fewer to run and read):
+  - **P5 is no longer a module**: it became a *layer of P4*
+    (`pairwise_regional.run_marker_layer`). Running `--modules P4` runs the
+    1 Mb-window pipeline on post-CBS `tumors.seg` (the `P4_*` tables) **and**,
+    when every cohort provides `D.cap1.5.mat`, on GISTIC's own marker matrix
+    (the `P5_*` tables, same statistics, `analyze_windows` + `write_p4_like`
+    reused directly). The layer is switchable with
+    `analysis.regional.marker_matrix: false` and reports, but does not fail,
+    when the marker files are absent.  `pairwise_marker.py` is gone and the
+    P5 figures are drawn by `figures_p4` from `res["marker"]`.
+  - **C and P2 are one implementation** (`sample_calls.run_calls`, the old
+    `pairwise_calls.py` deleted): two workflow forms of the same call
+    concordance, differing only in the comparison set and table prefix.  P2
+    no longer skips unpaired pairs outright — it now writes the
+    matched-pair **frequency** layer (plus `P2_frequency_scatter`), leaving
+    the paired-only agreement/McNemar layers empty; and both forms now share
+    the same `summary` columns (`kind`, `n_paired_samples` included).
+    Two numeric/robustness side-effects of unifying: `a_freq`/`b_freq` are
+    now computed on finite calls only (C silently counted NaN calls as
+    0-weighted), and the per-comparison FDR loop is NaN-safe.
+- **CLI**: `--workflow` help lists `pairwise: P1-P4, P6-P11` (P5 folded into
+  P4); `--skip-reasons` no longer lists P5.
 - **ABS — 采纳官方 SNP6 预处理规程**（ASCAT ExampleData/
   ASCAT_fromCELfiles.R）：logR 按 CN 探针/SNP 探针**分类中心化**（本队列
   实测类间偏移 +0.01~+0.11 log2）；**BAF=2 占位符转 NA**（CN 探针无

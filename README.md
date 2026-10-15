@@ -16,7 +16,7 @@ outputs side by side:
 
 - *Do the two runs find the same peaks?* (A, P1)
 - *Do the same samples get the same calls?* (C, P2)
-- *Is a region's copy-number distribution actually different between cohorts?* (P4/P5)
+- *Is a region's copy-number distribution actually different between cohorts?* (P4)
 - *Is one cohort globally more rearranged — focal or broad?* (P9)
 - *Which differences survive burden control and quality checks?* (P10, PQ, PD)
 - *How much of the observed difference could confounders explain?* (CF)
@@ -75,7 +75,7 @@ Each cohort folder must contain the GISTIC files named `<prefix>.<suffix>`:
 | `<prefix>.tumors.seg` | E, P4, P6, PD (arm calls / baseline), P7–P9 (fallback) |
 | `<prefix>.sample_seg_counts.txt` | E, P10 (sample QC) |
 | `<prefix>.regions_track.conf_90.bed` | A (cross-check) |
-| `<prefix>.D.cap1.5.mat` | P5, GS, P7–P9 (optional) |
+| `<prefix>.D.cap1.5.mat` | P4's marker layer, GS, P7–P9 (optional) |
 | `<prefix>.broad_values_by_arm.txt` | P6 (optional; else derived from seg) |
 | `<prefix>.amp_qv.conf_90.txt` / `.del_qv.conf_90.txt` | P6 (optional, display-only) |
 
@@ -96,7 +96,7 @@ and *"which signals are specific to my experiment?"*.
 |---|---|
 | A | peak overlap: Jaccard, q/frequency correlations + bootstrap CI, permutation null, shared-peak membership |
 | B | scores.gistic → 1 Mb grid resampling, genome-track correlations |
-| C | per-sample 0/1/2 call concordance / κ / McNemar (paired only) + frequency correlations |
+| C | per-sample 0/1/2 call concordance / κ / McNemar (paired comparisons) + matched-pair frequency correlations — **the benchmark form of P2** |
 | D | gene / cytoband set Jaccard, driver-gene presence |
 | E | per-sample FGA and segment QC |
 | F | experiment-specific signal fraction (vs control), 4 weightings |
@@ -107,10 +107,10 @@ and *"which signals are specific to my experiment?"*.
 | ID | question | basis |
 |---|---|---|
 | P1 | do the peak lists agree? (matched pairs, Δq/Δfreq, unique peaks, tiered Jaccard, UpSet, per-sample **OncoPrint** of union peaks) | GISTIC peaks |
-| P2 | do the same samples get the same calls? (auto-skips when unpaired) | per-peak calls |
+| **P2** | do the same samples get the same calls? (κ / exact McNemar on **paired** pairs; matched-pair frequencies for every pair) | per-peak calls |
 | P3 | per-peak logistic `altered ~ cohort + covariates` (needs a sample-metadata table) | per-peak calls |
 | **P4** | is the CN distribution different in this region? (1 Mb windows, Fisher + MW, null calibration, **minimum-detectable-difference table**) | `tumors.seg` |
-| P5 | same as P4 on GISTIC's own marker matrix | `D.cap1.5.mat` |
+| P4 (marker layer) | the **same statistics on GISTIC's own marker matrix** (`P5_*` tables), run as a second layer of the module when every cohort provides `D.cap1.5.mat`; disable with `analysis.regional.marker_matrix: false` | `D.cap1.5.mat` |
 | **P6** | does the **arm-level (broad) landscape** differ — the aneuploidy background? (per-arm Fisher, per-sample aneuploidy score) | `broad_values_by_arm.txt` or derived from `tumors.seg` |
 | **P7** | same frequency but **stronger alteration**? (amplitude compared *among altered samples*, high-level fraction, freq×amplitude quadrants) | `D.cap1.5.mat` + all_lesions `- CN values` rows |
 | **P8** | are the cohorts separable **as a whole**, and which loci drive it? (PERMANOVA + permutation, CV-AUC elastic-net, stability selection) | window/peak feature matrix |
@@ -164,10 +164,10 @@ python scripts/build_refs.py --mat /path/to/hg19.mat
 ```
 
 You can also pass plain TSVs with the same columns, or GISTIC `.mat` files,
-via the config paths. P5/GS/P7–P9 additionally use each cohort's
-`<prefix>.D.cap1.5.mat` (produced by your GISTIC run) — P5/GS are skipped
-with a notice when any cohort lacks it, while P7–P9 fall back to
-seg-derived window values.
+via the config paths. P4's marker layer, GS, P7–P9 additionally use each
+cohort's `<prefix>.D.cap1.5.mat` (produced by your GISTIC run) — the marker
+layer and GS are skipped with a notice when any cohort lacks it, while
+P7–P9 fall back to seg-derived window values.
 
 ## Output
 

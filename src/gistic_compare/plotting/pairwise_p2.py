@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ._core import *  # noqa: F401,F403
+from .benchmark_c import plot_frequency
 
 
 def plot_p2_peak_agreement(peak_agreement: pd.DataFrame,
@@ -335,5 +336,7 @@ def figures_p2(res: dict, cfg) -> None:
     plot_p2_peak_kappa_sorted(res.get("peak_agreement"), cfg)
     plot_p2_discordant_stacked(res.get("mcnemar"), cfg)
     plot_p2_sample_ranked(res.get("sample_agreement"), cfg)
+    # the matched-frequency layer C draws too; same figure, P2 prefix
+    plot_frequency(res.get("frequency"), cfg, prefix="P2")
 
 

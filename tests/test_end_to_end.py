@@ -59,7 +59,7 @@ def test_pairwise_all_modules(pairwise_config, tmp_path):
     _run(pairwise_config, ["--all", "--outdir", str(out)])
     tables = out / "test_pair" / "tables"
     names = {p.name for p in tables.iterdir()}
-    for mid in ("P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "CF", "GS"):
+    for mid in ("P1", "P2", "P3", "P4", "P6", "P7", "P8", "CF", "GS"):
         assert any(n.startswith(f"{mid}_") for n in names), mid
     # P4 found the synthetic chr1 5-10 Mb differential region
     import pandas as pd
@@ -78,8 +78,9 @@ def test_pairwise_all_modules(pairwise_config, tmp_path):
     assert (power["mde"] > 0).all() and (power["mde"] < 1).all()
     summary = pd.read_csv(tables / "P4_summary.tsv", sep="\t")
     assert {"max_abs_diff_amp", "n_windows_diff_gt_mde_amp"} <= set(summary)
-    # P5 shares the machinery
+    # the marker-matrix layer of P4 (the old module P5) shares the machinery
     assert (tables / "P5_power.tsv").exists()
+    assert (figures / "P5_genome_diff_fisher.png").exists()
     # OncoPrint: long call table + figure
     onco_calls = pd.read_csv(tables / "P1_onco_calls.tsv", sep="\t")
     assert {"peak_key", "sample", "cohort", "call"} <= set(onco_calls)

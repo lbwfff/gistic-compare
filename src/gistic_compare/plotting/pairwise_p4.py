@@ -388,24 +388,22 @@ def plot_p4_paper_list_heatmap_mw(bands, cfg, prefix="P4"):
     save(fig, cfg, f"{prefix}_paper_list_heatmap_mw")
 
 
+def _figures_regional_layer(res: dict, cfg, prefix: str) -> None:
+    bands = res.get("bands")
+    plot_p4_genome_diff_fisher(bands, cfg, prefix=prefix)
+    plot_p4_genome_diff_mw(bands, cfg, prefix=prefix)
+    plot_p4_paper_loci(res.get("paper"), cfg, prefix=prefix)
+    plot_p4_paper_list_heatmap_fisher(bands, cfg, prefix=prefix)
+    plot_p4_paper_list_heatmap_mw(bands, cfg, prefix=prefix)
+    plot_p4_null(res.get("null"), res.get("summary"), cfg, prefix=prefix)
+
+
 def figures_p4(res: dict, cfg) -> None:
-    bands = res.get("bands")
-    plot_p4_genome_diff_fisher(bands, cfg)
-    plot_p4_genome_diff_mw(bands, cfg)
-    plot_p4_paper_loci(res.get("paper"), cfg)
-    plot_p4_paper_list_heatmap_fisher(bands, cfg)
-    plot_p4_paper_list_heatmap_mw(bands, cfg)
-    plot_p4_null(res.get("null"), res.get("summary"), cfg)
-
-
-def figures_p5(res: dict, cfg) -> None:
-    """Same figures as P4, but on GISTIC's marker matrix (P5_ prefix)."""
-    bands = res.get("bands")
-    plot_p4_genome_diff_fisher(bands, cfg, prefix="P5")
-    plot_p4_genome_diff_mw(bands, cfg, prefix="P5")
-    plot_p4_paper_loci(res.get("paper"), cfg, prefix="P5")
-    plot_p4_paper_list_heatmap_fisher(bands, cfg, prefix="P5")
-    plot_p4_paper_list_heatmap_mw(bands, cfg, prefix="P5")
-    plot_p4_null(res.get("null"), res.get("summary"), cfg, prefix="P5")
+    """Both regional layers: ``P4_*`` (tumors.seg) and, when present, the
+    ``P5_*`` marker-matrix layer of the same pipeline."""
+    _figures_regional_layer(res, cfg, prefix="P4")
+    marker = res.get("marker")
+    if marker:
+        _figures_regional_layer(marker, cfg, prefix="P5")
 
 

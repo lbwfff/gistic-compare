@@ -1,4 +1,26 @@
-"""Module C: per-sample 0/1/2 call concordance."""
+"""Call-concordance analysis (shared by workflow C and pairwise module P2).
+
+One analysis, two comparison modes:
+
+  * benchmark ``C`` — every experiment vs the shared control cohort;
+  * pairwise ``P2`` — the configured cohort pairs.
+
+Per matched peak pair (GISTIC ``0/1/2`` calls on the same samples):
+
+  * frequency layer   — matched-pair alteration frequencies and Δfreq,
+    produced for **every** pair (paired and unpaired);
+  * agreement layer   — per-pair exact agreement and quadratic-weighted κ,
+    then per-sample agreement across that direction's matched pairs —
+    only for ``kind=paired`` comparisons (the two cohorts must contain the
+    same samples);
+  * McNemar layer     — exact two-sided McNemar on the discordant pairs plus
+    BH-FDR within each direction, again paired-only (and only when
+    statsmodels is importable);
+  * summary           — per comparison × direction.
+
+Outputs: `<tag>_peak_agreement.tsv`, `<tag>_sample_agreement.tsv`,
+         `<tag>_mcnemar.tsv`, `<tag>_frequency.tsv`, `<tag>_summary.tsv`
+"""
 
 from __future__ import annotations
 
@@ -62,6 +84,28 @@ def _pivot_calls(calls: pd.DataFrame) -> pd.DataFrame:
                              values="call", aggfunc="first")
 
 
+def _fdr_bh(p: np.ndarray) -> np.ndarray:
+    p = np.asarray(p, dtype=float)
+    out = np.full_like(p, np.nan)
+    ok = np.isfinite(p)
+    if not ok.any():
+        return out
+    if _HAS_STATSMODELS:
+        _, fdr, _, _ = _multipletests(p[ok], method="fdr_bh")
+        out[ok] = fdr
+        return out
+    # fallback BH
+    order = np.argsort(p[ok])
+    ranked = p[ok][order]
+    fdr_sorted = ranked * len(ranked) / (np.arange(len(ranked)) + 1)
+    fdr_sorted = np.minimum.accumulate(fdr_sorted[::-1])[::-1]
+    fdr_sorted = np.clip(fdr_sorted, 0, 1)
+    fdr = np.empty_like(fdr_sorted)
+    fdr[order] = fdr_sorted
+    out[ok] = fdr
+    return out
+
+
 # headers so empty tables still parse (star mode may have no paired rows)
 _SUMMARY_COLS = {
     "peak_agreement": ["comparison", "ptype", "a_peak_id", "b_peak_id",
@@ -76,37 +120,42 @@ _SUMMARY_COLS = {
                   "reciprocal_b", "a_cytoband", "b_cytoband", "comparison",
                   "kind", "ptype", "delta_freq", "a_freq", "b_freq",
                   "a_q", "b_q"],
-    "summary": ["comparison", "ptype", "n_matched_peaks",
-                "mean_exact_agreement", "median_exact_agreement",
-                "mean_weighted_kappa", "median_weighted_kappa"],
+    "summary": ["comparison", "kind", "ptype", "n_matched_peaks",
+                "n_paired_samples", "mean_exact_agreement",
+                "median_exact_agreement", "mean_weighted_kappa",
+                "median_weighted_kappa"],
 }
 
 
-def run_module_c(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
+def run_calls(cfg: dict[str, Any], data: dict[str, dict], tag: str
+             ) -> dict[str, Any]:
+    """The whole concordance analysis; ``tag`` is ``"C"`` or ``"P2"``."""
     ana = cfg["analysis"]
     q_main = ana["q_thresholds"][0]
-    ov = ana["overlap"]
+    # analysis.overlap is part of the benchmark contract; a minimal pairwise
+    # config may omit it, so fall back to the same defaults as the matcher
+    ov = ana.get("overlap") or {}
+    min_bp = int(ov.get("min_bp", 50))
+    recip = float(ov.get("reciprocal_shorter", 0.5))
 
-    # ---------- paired: cue vs despiked ----------
-    paired = [c for c in cfg["comparisons"] if c.get("kind") == "paired"]
-    unpaired = [c for c in cfg["comparisons"] if c.get("kind") != "paired"]
+    peak_rows: list[dict[str, Any]] = []
+    sample_rows: list[dict[str, Any]] = []
+    mcnemar_rows: list[dict[str, Any]] = []
+    freq_rows: list[pd.DataFrame] = []
+    summary_rows: list[dict[str, Any]] = []
 
-    peak_level_rows = []
-    sample_level_rows = []
-    mcnemar_rows = []
-    freq_rows = []
-
-    for cmp_ in paired + unpaired:
+    for cmp_ in cfg["comparisons"]:
         ca, cb = cmp_["a"], cmp_["b"]
-        pa, pb = data[ca]["peaks"], data[cb]["peaks"]
+        comp = f"{ca}_vs_{cb}"
         kind = cmp_.get("kind", "unpaired")
+        pa, pb = data[ca]["peaks"], data[cb]["peaks"]
 
-        # frequency comparison always possible
+        # ---- frequency layer: defined for every comparison ----
         for ptype in ("Amp", "Del"):
             fa = iv.filter_peaks(pa, q_main, ptype)
             fb = iv.filter_peaks(pb, q_main, ptype)
-            res = iv.match_peaks(fa, fb, min_bp=ov["min_bp"],
-                                 reciprocal=ov["reciprocal_shorter"],
+            res = iv.match_peaks(fa, fb, min_bp=min_bp,
+                                 reciprocal=recip,
                                  mode="either")
             if len(res.pairs) == 0:
                 continue
@@ -119,7 +168,7 @@ def run_module_c(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
                 .rename(columns={"freq_altered": "b_freq", "q": "b_q"}),
                 left_on="b_peak_id", right_on="peak_id", how="left"
             ).drop(columns="peak_id")
-            m["comparison"] = f"{ca}_vs_{cb}"
+            m["comparison"] = comp
             m["kind"] = kind
             m["ptype"] = ptype
             m["delta_freq"] = m["a_freq"] - m["b_freq"]
@@ -128,19 +177,22 @@ def run_module_c(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
         if kind != "paired":
             continue
 
+        # ---- per-call layers: need the same samples in both cohorts ----
         calls_a = _pivot_calls(data[ca]["calls"])
         calls_b = _pivot_calls(data[cb]["calls"])
-        common_samples = sorted(set(calls_a.columns) & set(calls_b.columns))
-        if not common_samples:
+        common = sorted(set(calls_a.columns) & set(calls_b.columns))
+        if not common:
             continue
-        calls_a = calls_a[common_samples]
-        calls_b = calls_b[common_samples]
+        calls_a = calls_a[common]
+        calls_b = calls_b[common]
+        accs: list[float] = []
+        kappas: list[float] = []
 
         for ptype in ("Amp", "Del"):
             fa = iv.filter_peaks(pa, q_main, ptype)
             fb = iv.filter_peaks(pb, q_main, ptype)
-            res = iv.match_peaks(fa, fb, min_bp=ov["min_bp"],
-                                 reciprocal=ov["reciprocal_shorter"],
+            res = iv.match_peaks(fa, fb, min_bp=min_bp,
+                                 reciprocal=recip,
                                  mode="either")
             for _, pr in res.pairs.iterrows():
                 ida, idb = pr["a_peak_id"], pr["b_peak_id"]
@@ -153,113 +205,108 @@ def run_module_c(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
                     continue
                 acc = float((va[ok] == vb[ok]).mean())
                 kappa = _weighted_kappa(va, vb)
-                peak_level_rows.append(dict(
-                    comparison=f"{ca}_vs_{cb}", ptype=ptype,
+                accs.append(acc)
+                kappas.append(kappa)
+                peak_rows.append(dict(
+                    comparison=comp, ptype=ptype,
                     a_peak_id=ida, b_peak_id=idb,
-                    a_cytoband=pr["a_cytoband"], b_cytoband=pr["b_cytoband"],
+                    a_cytoband=pr.get("a_cytoband", ""),
+                    b_cytoband=pr.get("b_cytoband", ""),
                     n_samples=int(ok.sum()),
-                    exact_agreement=acc,
-                    weighted_kappa=kappa,
-                    a_freq=float(np.nanmean(va > 0)),
-                    b_freq=float(np.nanmean(vb > 0)),
+                    exact_agreement=acc, weighted_kappa=kappa,
+                    a_freq=float(np.nanmean(va[ok] > 0)),
+                    b_freq=float(np.nanmean(vb[ok] > 0)),
                 ))
 
-                # McNemar on binary altered/not
+                # exact McNemar on the binary altered/not calls
                 a_bin = (va[ok] > 0).astype(int)
                 b_bin = (vb[ok] > 0).astype(int)
-                b01 = int(((a_bin == 0) & (b_bin == 1)).sum())  # b altered, a not
-                b10 = int(((a_bin == 1) & (b_bin == 0)).sum())  # a altered, b not
-                table = np.array([[int(((a_bin == 1) & (b_bin == 1)).sum()), b10],
-                                  [b01, int(((a_bin == 0) & (b_bin == 0)).sum())]])
-                # 2x2 table of discordant counts for exact McNemar
-                discord = np.array([[0, b10], [b01, 0]])
-                pval = _exact_mcnemar_p(b10, b01)
+                b01 = int(((a_bin == 0) & (b_bin == 1)).sum())
+                b10 = int(((a_bin == 1) & (b_bin == 0)).sum())
                 mcnemar_rows.append(dict(
-                    comparison=f"{ca}_vs_{cb}", ptype=ptype,
+                    comparison=comp, ptype=ptype,
                     a_peak_id=ida, b_peak_id=idb,
-                    a_cytoband=pr["a_cytoband"], b_cytoband=pr["b_cytoband"],
+                    a_cytoband=pr.get("a_cytoband", ""),
+                    b_cytoband=pr.get("b_cytoband", ""),
                     only_a_altered=b10, only_b_altered=b01,
-                    mcnemar_p=pval,
+                    mcnemar_p=_exact_mcnemar_p(b10, b01),
                 ))
 
-            # per-sample agreement across all matched peak pairs of this type
-            if peak_level_rows:
-                sub = [r for r in peak_level_rows
-                       if r["comparison"] == f"{ca}_vs_{cb}" and r["ptype"] == ptype]
-                # aggregate per sample
-                peak_ids_a = [r["a_peak_id"] for r in sub]
-                peak_ids_b = [r["b_peak_id"] for r in sub]
-                if peak_ids_a:
-                    mat_a = calls_a.loc[[p for p in peak_ids_a if p in calls_a.index]]
-                    mat_b = calls_b.loc[[p for p in peak_ids_b if p in calls_b.index]]
-                    # align by pair order
-                    rows_a = []
-                    rows_b = []
-                    for r in sub:
-                        if r["a_peak_id"] in calls_a.index and r["b_peak_id"] in calls_b.index:
-                            rows_a.append(calls_a.loc[r["a_peak_id"]].to_numpy(float))
-                            rows_b.append(calls_b.loc[r["b_peak_id"]].to_numpy(float))
-                    if rows_a:
-                        A = np.vstack(rows_a)
-                        B = np.vstack(rows_b)
-                        for si, s in enumerate(common_samples):
-                            va, vb = A[:, si], B[:, si]
-                            ok = np.isfinite(va) & np.isfinite(vb)
-                            if ok.sum() == 0:
-                                continue
-                            sample_level_rows.append(dict(
-                                comparison=f"{ca}_vs_{cb}", ptype=ptype,
-                                sample=s,
-                                n_peaks=int(ok.sum()),
-                                exact_agreement=float((va[ok] == vb[ok]).mean()),
-                                weighted_kappa=_weighted_kappa(va, vb),
-                            ))
+            # per-sample agreement across this direction's matched pairs
+            rows_a, rows_b = [], []
+            for r in peak_rows:
+                if r["comparison"] != comp or r["ptype"] != ptype:
+                    continue
+                if (r["a_peak_id"] in calls_a.index
+                        and r["b_peak_id"] in calls_b.index):
+                    rows_a.append(calls_a.loc[r["a_peak_id"]].to_numpy(float))
+                    rows_b.append(calls_b.loc[r["b_peak_id"]].to_numpy(float))
+            if rows_a:
+                A = np.vstack(rows_a)
+                B = np.vstack(rows_b)
+                for si, s in enumerate(common):
+                    va, vb = A[:, si], B[:, si]
+                    ok = np.isfinite(va) & np.isfinite(vb)
+                    if ok.sum() == 0:
+                        continue
+                    sample_rows.append(dict(
+                        comparison=comp, ptype=ptype, sample=s,
+                        n_peaks=int(ok.sum()),
+                        exact_agreement=float((va[ok] == vb[ok]).mean()),
+                        weighted_kappa=_weighted_kappa(va, vb),
+                    ))
 
-    # FDR on McNemar
+        for ptype in ("Amp", "Del"):
+            sub = [r for r in peak_rows if r["comparison"] == comp
+                   and r["ptype"] == ptype]
+            if not sub:
+                continue
+            summary_rows.append(dict(
+                comparison=comp, kind=kind, ptype=ptype,
+                n_matched_peaks=len(sub),
+                n_paired_samples=len(common),
+                mean_exact_agreement=float(np.nanmean([r["exact_agreement"]
+                                                       for r in sub])),
+                median_exact_agreement=float(np.nanmedian(
+                    [r["exact_agreement"] for r in sub])),
+                mean_weighted_kappa=float(np.nanmean([r["weighted_kappa"]
+                                                      for r in sub])),
+                median_weighted_kappa=float(np.nanmedian(
+                    [r["weighted_kappa"] for r in sub])),
+            ))
+
     mc = pd.DataFrame(mcnemar_rows)
     if not mc.empty:
         mc["mcnemar_fdr"] = np.nan
         for ptype in mc["ptype"].unique():
             m = (mc["ptype"] == ptype).to_numpy()
-            p = mc.loc[m, "mcnemar_p"].to_numpy(float)
-            ok = np.isfinite(p)
-            if ok.any():
-                if _HAS_STATSMODELS:
-                    _, fdr, _, _ = _multipletests(p[ok], method="fdr_bh")
-                else:
-                    order = np.argsort(p[ok])
-                    ranked = p[ok][order]
-                    fdr_sorted = ranked * len(ranked) / (np.arange(len(ranked)) + 1)
-                    fdr_sorted = np.minimum.accumulate(fdr_sorted[::-1])[::-1]
-                    fdr_sorted = np.clip(fdr_sorted, 0, 1)
-                    fdr = np.empty_like(fdr_sorted)
-                    fdr[order] = fdr_sorted
-                idx = np.flatnonzero(m)[ok]
-                mc.iloc[idx, mc.columns.get_loc("mcnemar_fdr")] = fdr
+            mc.loc[m, "mcnemar_fdr"] = _fdr_bh(
+                mc.loc[m, "mcnemar_p"].to_numpy(float))
 
-    peak_df = pd.DataFrame(peak_level_rows)
-    sample_df = pd.DataFrame(sample_level_rows)
-    freq_df = pd.concat(freq_rows, ignore_index=True) if freq_rows else pd.DataFrame()
+    peak_df = pd.DataFrame(peak_rows)
+    sample_df = pd.DataFrame(sample_rows)
+    freq_df = (pd.concat(freq_rows, ignore_index=True) if freq_rows
+               else pd.DataFrame())
 
-    # summary
-    summary_rows = []
-    for (comp, ptype), g in peak_df.groupby(["comparison", "ptype"]) if not peak_df.empty else []:
-        summary_rows.append(dict(
-            comparison=comp, ptype=ptype, n_matched_peaks=len(g),
-            mean_exact_agreement=g["exact_agreement"].mean(),
-            median_exact_agreement=g["exact_agreement"].median(),
-            mean_weighted_kappa=g["weighted_kappa"].mean(),
-            median_weighted_kappa=g["weighted_kappa"].median(),
-        ))
-    summary_df = pd.DataFrame(summary_rows)
-
-    for name, df in (("peak_agreement", peak_df), ("sample_agreement", sample_df),
-                     ("mcnemar", mc), ("frequency", freq_df),
-                     ("summary", summary_df)):
-        # ensure header exists even when empty (e.g. star topology, no paired)
+    for name, df in (("peak_agreement", peak_df),
+                     ("sample_agreement", sample_df),
+                     ("mcnemar", mc),
+                     ("frequency", freq_df),
+                     ("summary", pd.DataFrame(summary_rows))):
         if df.empty:
-            df = pd.DataFrame(columns=_SUMMARY_COLS.get(name, df.columns.tolist()))
-        df.to_csv(out_table(cfg, f"C_{name}.tsv"), sep="\t", index=False)
+            df = pd.DataFrame(columns=_SUMMARY_COLS.get(name, df.columns))
+        df.to_csv(out_table(cfg, f"{tag}_{name}.tsv"), sep="\t", index=False)
 
     return dict(peak_agreement=peak_df, sample_agreement=sample_df,
-                mcnemar=mc, frequency=freq_df, summary=summary_df)
+                mcnemar=mc, frequency=freq_df,
+                summary=pd.DataFrame(summary_rows))
+
+
+def run_module_c(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
+    """Benchmark form of the shared analysis (table prefix ``C_``)."""
+    return run_calls(cfg, data, "C")
+
+
+def run_module_p2(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
+    """Pairwise form of the shared analysis (table prefix ``P2_``)."""
+    return run_calls(cfg, data, "P2")

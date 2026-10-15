@@ -23,6 +23,10 @@ with different cohort sizes.
 
 ## What each tier of P4/P5 can support
 
+(P5 is no longer a separate module: it is P4's **marker-matrix layer**, the
+same pipeline run on `D.cap1.5.mat` and written out as `P5_*` tables. The
+tiers below apply to every prefix, `P4_*` and `P5_*` alike.)
+
 - **Per-window FDR** (`*_regional_diff` `*_fdr`) — exploratory only. 1 Mb
   windows are highly correlated; BH across ~2,800 windows is far too lenient.
 - **Cytoband-level tests** (`*_cytoband_diff`) — pre-specified units, no
@@ -78,10 +82,14 @@ colliders — treat CF results as sensitivity analysis, not proof.
 
 ## Sample-level concordance (C, P2)
 
-Exact McNemar (binomial) on discordant pairs, weighted Cohen's κ for 0/1/2
-calls, BH across peaks. Only meaningful for **paired** comparisons
-(same samples in both cohorts); unpaired comparisons are skipped
-automatically.
+One analysis with two workflow forms: benchmark **C** (experiment vs control,
+`C_*` tables) and pairwise **P2** (`P2_*` tables). Exact McNemar (binomial) on
+discordant pairs, weighted Cohen's κ for 0/1/2 calls, BH across peaks — only
+meaningful for **paired** comparisons (same samples in both cohorts), which is
+why the agreement and McNemar layers are written for those alone. The
+matched-pair **frequency** layer is defined for every comparison, so an
+unpaired pair is no longer skipped outright: it produces `*_frequency.tsv`
+and the frequency scatter, with the agreement columns empty.
 
 ## P3 modelling
 

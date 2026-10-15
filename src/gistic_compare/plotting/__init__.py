@@ -36,7 +36,7 @@ from .pairwise_p2 import figures_p2  # noqa: F401
 from .pairwise_p3 import *  # noqa: F401,F403
 from .pairwise_p3 import figures_p3  # noqa: F401
 from .pairwise_p4 import *  # noqa: F401,F403
-from .pairwise_p4 import figures_p4, figures_p5  # noqa: F401
+from .pairwise_p4 import figures_p4  # noqa: F401
 from .pairwise_p6 import *  # noqa: F401,F403
 from .pairwise_p6 import figures_p6  # noqa: F401
 from .pairwise_p7 import *  # noqa: F401,F403

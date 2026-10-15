@@ -17,7 +17,8 @@ from ._core import *  # noqa: F401,F403
 # C: sample calls
 # ---------------------------------------------------------------------------
 
-def plot_agreement(peak_agreement: pd.DataFrame, cfg: dict[str, Any]) -> None:
+def plot_agreement(peak_agreement: pd.DataFrame, cfg: dict[str, Any],
+                   prefix: str = "C") -> None:
     if peak_agreement.empty:
         return
     style(cfg)
@@ -40,10 +41,11 @@ def plot_agreement(peak_agreement: pd.DataFrame, cfg: dict[str, Any]) -> None:
                       loc="lower left")
         theme.panel_label(ax, theme.panel_letter(k), cfg)
     theme.finalize(fig, "tight")
-    save(fig, cfg, "C_peak_agreement")
+    save(fig, cfg, f"{prefix}_peak_agreement")
 
 
-def plot_sample_agreement(sample_agreement: pd.DataFrame, cfg: dict[str, Any]) -> None:
+def plot_sample_agreement(sample_agreement: pd.DataFrame, cfg: dict[str, Any],
+                          prefix: str = "C") -> None:
     if sample_agreement.empty:
         return
     style(cfg)
@@ -70,10 +72,11 @@ def plot_sample_agreement(sample_agreement: pd.DataFrame, cfg: dict[str, Any]) -
     for ax in flat[len(comps):]:
         ax.set_visible(False)
     theme.finalize(fig, "tight")
-    save(fig, cfg, "C_sample_agreement")
+    save(fig, cfg, f"{prefix}_sample_agreement")
 
 
-def plot_frequency(freq: pd.DataFrame, cfg: dict[str, Any]) -> None:
+def plot_frequency(freq: pd.DataFrame, cfg: dict[str, Any],
+                   prefix: str = "C") -> None:
     if freq.empty:
         return
     style(cfg)
@@ -116,6 +119,6 @@ def plot_frequency(freq: pd.DataFrame, cfg: dict[str, Any]) -> None:
             if i == len(comps) - 1:
                 ax.set_xlabel(f"{la}: frequency")
     theme.finalize(fig, "constrained", wspace=0.35, hspace=0.30)
-    save(fig, cfg, "C_frequency_scatter")
+    save(fig, cfg, f"{prefix}_frequency_scatter")
 
 

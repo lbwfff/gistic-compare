@@ -22,8 +22,18 @@ Design (config `analysis.regional`):
     own group sizes, run through the same binary pipeline (Fisher + MW,
     BH) -> false-positive background
 
+The module runs this pipeline **twice**, on both data sources, as separate
+layers of one analysis:
+  * ``P4_*`` on post-CBS ``tumors.seg`` (always available, length-weighted)
+  * ``P5_*`` on GISTIC's own marker matrix ``D.cap1.5.mat`` when present for
+    every cohort (marker-count-weighted), disabled with
+    ``analysis.regional.marker_matrix: false``
+The two layers are not interchangeable (different underlying measurement),
+but they are the *same* statistics and are directly comparable.
+
 Outputs: P4_regional_diff.tsv, P4_differential_regions.tsv,
-         P4_exclusive_regions.tsv, P4_summary.tsv, P4_null_calibration.tsv
+         P4_exclusive_regions.tsv, P4_summary.tsv, P4_null_calibration.tsv,
+         and the same set of ``P5_`` tables for the marker-matrix layer.
 """
 
 from __future__ import annotations
@@ -36,6 +46,7 @@ import pandas as pd
 from scipy import stats
 
 from .config import CHROMS, out_table
+from .marker_matrix import marker_window_matrix
 from .presets import _resolve
 from .presets import from_cfg as _preset_from_cfg
 from .score_track import make_grid
@@ -793,6 +804,51 @@ def write_p4_like(cfg: dict[str, Any], res: dict, prefix: str) -> None:
                        index=False)
 
 
+def run_marker_layer(cfg: dict[str, Any], data: dict[str, dict],
+                     rcfg: dict, bands: pd.DataFrame,
+                     band_genes: dict, grid: pd.DataFrame) -> dict | None:
+    """P4's marker-matrix layer — the old module P5, now a layer of P4.
+
+    Same window grid and the same statistics as the ``seg`` layer, but the
+    values come from GISTIC's per-marker/per-sample ``D.cap1.5.mat``
+    (MATLAB SPM jet) instead of resampling the post-CBS ``tumors.seg``.
+    Writes the ``P5_*`` tables.
+
+    Returns the result dict, or ``None`` when the layer is disabled
+    (``analysis.regional.marker_matrix: false``) or any cohort lacks its
+    marker matrix — the ``seg`` layer always runs and stays the primary.
+    """
+    r = (cfg.get("analysis") or {}).get("regional") or {}
+    if not bool(r.get("marker_matrix", True)):
+        print("  [P4] marker-matrix layer disabled "
+              "(analysis.regional.marker_matrix: false)")
+        return None
+    cap = rcfg.get("marker_cap_file", "D.cap1.5.mat")
+    missing = [cid for cid, c in cfg["cohorts"].items()
+               if not (c["_abs"] / f"{c['prefix']}.{cap}").exists()]
+    if missing:
+        print(f"  [P4] marker-matrix layer skipped: {', '.join(missing)} "
+              f"lack(s) {cap} — seg layer unaffected")
+        return None
+    try:
+        vals = {}
+        for cid, c in cfg["cohorts"].items():
+            mat = c["_abs"] / f"{c['prefix']}.{cap}"
+            v, samples = marker_window_matrix(mat, grid)
+            vals[cid] = v
+            print(f"  [P4] marker layer {cid}: {v.shape[0]} windows x "
+                  f"{len(samples)} samples from {mat.name}")
+        res = analyze_windows(cfg, vals, bands, band_genes, grid, rcfg,
+                              tag="P5")
+    except Exception as e:
+        print(f"  [P4] marker-matrix layer failed ({e}) — seg layer "
+              "unaffected")
+        return None
+    if not res.get("summary", pd.DataFrame()).empty:
+        write_p4_like(cfg, res, "P5")
+    return res
+
+
 def run_module_p4(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     rcfg = _regional_cfg(cfg)
     grid = make_grid(rcfg["bin_size"])
@@ -802,4 +858,5 @@ def run_module_p4(cfg: dict[str, Any], data: dict[str, dict]) -> dict[str, Any]:
     bands, band_genes = _load_band_genes(cfg, rcfg, data)
     res = analyze_windows(cfg, vals, bands, band_genes, grid, rcfg, tag="P4")
     write_p4_like(cfg, res, "P4")
+    res["marker"] = run_marker_layer(cfg, data, rcfg, bands, band_genes, grid)
     return res

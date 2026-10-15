@@ -6,8 +6,10 @@
 #   gistic-compare --config config.pairwise.yaml --all
 #
 # All modules run independently; one failing module does not abort the rest
-# (unless --fail-fast). P5/GS additionally need <prefix>.D.cap1.5.mat and are
-# skipped with a notice when it is missing. P8 needs scikit-learn.
+# (unless --fail-fast). P4's marker-matrix layer (the P5_* tables) and GS
+# additionally need <prefix>.D.cap1.5.mat and are skipped with a notice when
+# it is missing; disable the marker layer with
+# analysis.regional.marker_matrix: false. P8 needs scikit-learn.
 
 workflow: pairwise
 genome: hg19
@@ -30,7 +32,7 @@ cohorts:
 # optional: confounder sensitivity (CF) — needs only per-cohort marginals.
 # CF bounds what a confounder could explain; it does not adjust for it.
 # confounding:
-#   sources: [P4, P5]
+#   sources: [P4, P5]   # P5_* = P4's marker-matrix layer
 #   smoking_unknown: drop
 #   delta_grid: [0.02, 0.05, 0.10, 0.20]
 #   age_grid: [0.001, 0.002, 0.005, 0.010]
@@ -56,7 +58,8 @@ analysis:
   permutation: {n: 2000, seed: 42}
   bootstrap: {n: 2000, seed: 42, ci: 0.95}
   score_track: {bin_size: 1000000}
-  regional:                       # P4 (and P5/GS share thresholds)
+  regional:                       # P4; GS and P4's marker layer share thresholds
+    # marker_matrix: false        # skip the P5_* marker-matrix layer
     bin_size: 1000000
     amp_thr: 0.1
     del_thr: -0.1
