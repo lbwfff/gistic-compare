@@ -95,12 +95,32 @@ def build_onco_data(cfg: dict[str, Any], data: dict[str, dict],
         matrix = matrix.reindex(columns=samples)
 
         # row metadata: coordinates from the first member, per-cohort q/freq
+        # plus the chain's *narrow* (Peak Limits) and *wide* (Wide Peak
+        # Limits) spans, so a row can be labelled at either granularity
+        pk_idx = {cid: data[cid]["peaks"].set_index("peak_id")
+                  for cid in (ca, cb) if len(data[cid]["peaks"])}
         meta_rows = []
         for key, g in ksub.groupby("peak_key", sort=False):
             first = g.sort_values(["chrom", "start"]).iloc[0]
             row = dict(peak_key=key, ptype=first["ptype"],
                        cytoband=first["cytoband"], chrom=first["chrom"],
                        start=int(first["start"]), end=int(first["end"]))
+            nar_s: list[int] = []
+            nar_e: list[int] = []
+            for _, m in g.iterrows():
+                pk = pk_idx.get(m["cohort"])
+                if pk is None or m["peak_id"] not in pk.index:
+                    continue
+                ref = pk.loc[m["peak_id"]]
+                try:
+                    if np.isfinite(float(ref["peak_start"])):
+                        nar_s.append(int(ref["peak_start"]))
+                        nar_e.append(int(ref["peak_end"]))
+                except (TypeError, ValueError):
+                    continue
+            if nar_s:                      # the chain's narrow-peak core
+                row["narrow_start"] = int(min(nar_s))
+                row["narrow_end"] = int(max(nar_e))
             for cid, side in ((ca, "a"), (cb, "b")):
                 m = g[g["cohort"] == cid]
                 row[f"q_{side}"] = (float(m["q"].min()) if len(m) else np.nan)

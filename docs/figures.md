@@ -77,25 +77,39 @@ shows Δfreq (A − B) in cohort colours, treating a missing peak as frequency 0
 The *OncoPlot* is the ComplexHeatmap-flavoured sibling of the OncoPrint: one
 peak row per genomic **locus**, the two cohorts' samples side by side.
 
-- **Rows = union peak loci.** Since the P1 chains are type-consistent, an
-  Amplification and a Deletion chain whose intervals overlap (reciprocal
-  ≥ 50 % of the shorter) are merged into one locus row, so a single peak can
-  carry both the Amp and the Del alteration state (a merged row is labelled
-  `band+` with its coordinate). Rows are ranked by *combined* alteration
-  frequency (amp+del over both cohorts) and only the **top 10** are drawn
-  (`plotting/oncoplot.py::_TOP_ROWS`).
+- **Rows = union peak loci, cut at the narrow peak.** Since the P1 chains are
+  type-consistent, an Amplification and a Deletion chain whose **narrow
+  (Peak Limits) cores** overlap (reciprocal ≥ 50 % of the shorter) are merged
+  into one row, so a single peak can carry both alteration states.  The row
+  label is `cytoband (narrow-span/wide-span)` — e.g. `9p21.3 (52kb/894kb)`
+  vs `13q12.11 (43.7Mb/115.2Mb)` — which makes the *granularity* of each row
+  explicit: GISTIC's cytoband names are not comparable units, and a "focal"
+  row and an arm-sized row look identical without the spans.  Rows are ranked
+  by *combined* alteration frequency (amp+del over both cohorts); only the
+  **top 10** are drawn (`plotting/oncoplot.py::_TOP_ROWS`).
 - **Cells** = alteration state only: vermillion = amplified, blue = deleted,
   white = no alteration **or** no peak called there (the two are deliberately
   not distinguished — unlike the OncoPrint, there is no grey third state).
-- **Right** = one thin stacked bar per cohort (amp over del) with an edge in
-  the cohort colour, and the combined frequency printed beside it; Δfreq
-  (A − B) stays as its own strip.
+  A light grey frame around every cell keeps a white cell readable as an
+  *empty cell* rather than as blank canvas; the cells are contiguous
+  vertically (no inter-row gap).
+- **Column order = hierarchical waterfall.** Inside each cohort block the
+  samples are sorted by their alteration *pattern* over the ranked rows:
+  peak 1's altered/unaltered split first, then peak 2 within each group, then
+  peak 3, recursively (i.e. `1+2+ → 1+2− → 1−2+ → 1−2−`), most-altered
+  patterns first (left); ties fall back to the number of calls.  Cohort A's
+  samples form the left block, cohort B's the right, separated by a white
+  line.
+- **Right** = a single panel with, per row, one stacked bar per cohort (amp
+  over del): **upper bar = cohort A, lower = cohort B**, with the combined
+  frequency printed beside each.  The cohort is encoded by *position*, never
+  by colour — vermillion/blue only ever mean Amp/Del (a compact
+  `upper = A, lower = B` legend states the convention).
 - **Top** = per-sample *calls* strip (amp stacked over del), the SCNA
   analogue of a mutation OncoPlot's TMB track, and the
   "**Altered in k (p%) of n**" header that ComplexHeatmap prints.
-- **Column order**: cohort A's samples block then cohort B's, a white
-  separator between the blocks; within a block the current builder's order is
-  kept (no burden-based column sorting yet).
+- A bottom margin is reserved so the frequency axis and its label are never
+  cropped.
 
 
 

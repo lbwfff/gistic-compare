@@ -74,6 +74,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   segmentation count rho = 0.90 and ~ purity rho = -0.60 — interpret on
   the informative tier with a purity floor; between-cohort comparison
   null (MW p = 0.43-0.91).
+- **OncoPlot (P1, `P1_oncoplot`)** — a ComplexHeatmap-style companion to the
+  P1 OncoPrint: rows are union peak loci cut at GISTIC's **narrow** (Peak
+  Limits) cores, labelled `cytoband (narrow-span/wide-span)` and ranked by
+  combined alteration frequency (top 10); cells are the alteration state
+  (vermillion = amp, blue = del) with a light frame on every cell and no
+  distinct "no peak called" colour; columns are the two cohorts' samples side
+  by side, ordered as a **hierarchical waterfall** over the ranked rows
+  (peak 1's altered/unaltered split, then peak 2 within each group, …); the
+  top strip is a per-sample amp/del call count (the mutation-OncoPlot TMB
+  analogue); the right panel carries one stacked amp-over-del bar per cohort
+  (upper = A, lower = B — position, not colour) with the frequency printed
+  beside it.  The older grey/Δfreq OncoPrint (`P1_oncoprint`) is unchanged.
 - **Modules P9/P11 (pairwise) — CNV landscape figures**:
   - **P9 arm / chromosome event-frequency figures** (`P9_arm_events`,
     `P9_chrom_events`): per cohort, the fraction of samples carrying each

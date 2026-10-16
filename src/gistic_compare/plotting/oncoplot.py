@@ -42,8 +42,18 @@ _LABEL_MAXLEN = 18
 
 
 def _merge_loci(meta: pd.DataFrame) -> list[list[str]]:
-    """How the peak chains group into locus rows."""
-    recs = meta.reset_index().to_dict("records")
+    """How the peak chains group into locus rows.
+
+    The grouping runs on the **narrow peaks** (Peak Limits): two chains whose
+    focal cores overlap count as one locus even though their wide-shaped
+    flanks differ.  Rows without a narrow span fall back to their wide one.
+    """
+    recs = []
+    for key, m in zip(meta.index, meta.to_dict("records")):
+        rec = dict(m, peak_key=key)
+        if "narrow_start" not in rec or pd.isna(rec.get("narrow_start")):
+            rec["narrow_start"], rec["narrow_end"] = rec["start"], rec["end"]
+        recs.append(rec)
     used: set[str] = set()
     groups: list[list[str]] = []
     for i, a in enumerate(recs):
@@ -56,11 +66,11 @@ def _merge_loci(meta: pd.DataFrame) -> list[list[str]]:
             bk = b["peak_key"]
             if bk in used or b["chrom"] != a["chrom"]:
                 continue
-            lo = max(a["start"], b["start"])
-            hi = min(a["end"], b["end"])
+            lo = max(a["narrow_start"], b["narrow_start"])
+            hi = min(a["narrow_end"], b["narrow_end"])
             ov = max(0, hi - lo)
-            shorter = max(1, min(a["end"] - a["start"],
-                                 b["end"] - b["start"]))
+            shorter = max(1, min(a["narrow_end"] - a["narrow_start"],
+                                 b["narrow_end"] - b["narrow_start"]))
             if ov / shorter < _MERGE_RECIP:
                 continue
             used.add(bk)
@@ -69,14 +79,29 @@ def _merge_loci(meta: pd.DataFrame) -> list[list[str]]:
     return groups
 
 
-def _locus_label(meta: pd.DataFrame, keys: list[str]) -> str:
-    band = str(meta.loc[keys[0], "cytoband"]).strip()
+def _span(bp: float) -> str:
+    """Genomic span in its most readable unit (kb below 1 Mb, else Mb)."""
+    kb = abs(float(bp)) / 1000.0
+    return f"{kb / 1000.0:.1f}Mb" if kb >= 1000.0 else f"{kb:.0f}kb"
+
+
+def _locus_label(row: dict[str, Any]) -> str:
+    """`cytoband (narrow-span / wide-span)` — both granularities on one row.
+
+    A merged amp+del row reports the union of its members' narrow cores and
+    the union of their wide peaks; when narrow == wide (a strictly focal
+    peak that GISTIC could not extend) the single span is shown instead.
+    """
+    band = str(row.get("cytoband", "")).strip()
     if not band:
-        band = (f"{meta.loc[keys[0], 'chrom']}:"
-                f"{int(meta.loc[keys[0], 'start']) // 10**6}Mb")
-    bands = {str(meta.loc[k, "cytoband"]).strip() for k in keys}
-    label = band if len(bands) == 1 else f"{band}+"
-    return label[:_LABEL_MAXLEN]
+        band = f"{row['chrom']}:{int(row['start']) // 10**6}Mb"
+    nar = abs(int(row.get("narrow_end", 0)) - int(row.get("narrow_start", 0)))
+    wid = abs(int(row.get("end", 0)) - int(row.get("start", 0)))
+    if abs(nar - wid) < 1000.0:
+        text = _span(nar)          # narrow == wide: a cannot-extend focal peak
+    else:
+        text = f"{_span(nar)}/{_span(wid)}"
+    return f"{band} ({text})"[:_LABEL_MAXLEN + 12]
 
 
 def _locus_table(meta: pd.DataFrame, matrix: pd.DataFrame,
@@ -114,14 +139,26 @@ def _locus_table(meta: pd.DataFrame, matrix: pd.DataFrame,
             counts[f"amp_{bi}"] = na_ / n
             counts[f"del_{bi}"] = nd_ / n
         denom = counts["n_0"] + counts["n_1"]
+        nar_s: list[int] = []
+        nar_e: list[int] = []
+        for k in keys:
+            m = meta.loc[k]
+            has_n = ("narrow_start" in m.index and "narrow_end" in m.index
+                     and pd.notna(m["narrow_start"])
+                     and pd.notna(m["narrow_end"]))
+            nar_s.append(int(m["narrow_start"] if has_n else m["start"]))
+            nar_e.append(int(m["narrow_end"] if has_n else m["end"]))
         first = meta.loc[keys[0]]
         row = dict(
             cell=vals,
             locus_key="|".join(keys),
-            cytoband=_locus_label(meta, keys),
-            chrom=str(first["chrom"]), start=int(first["start"]),
+            cytoband=str(first["cytoband"]),
+            chrom=str(first["chrom"]),
+            start=int(min(meta.loc[k, "start"] for k in keys)),
             end=int(max(meta.loc[k, "end"] for k in keys)),
+            narrow_start=int(min(nar_s)), narrow_end=int(max(nar_e)),
             mixed=bool(amp_members and del_members))
+        row["locus_label"] = _locus_label(row)
         row.update(counts)
         row["freq_union"] = float(
             (counts["n_amp_0"] + counts["n_del_0"]
@@ -167,7 +204,13 @@ def _draw_top_strip(ax, cell: pd.DataFrame, blocks: list[dict]) -> None:
 def _draw_heat(ax, cell: pd.DataFrame, blocks: list[dict]):
     ax.imshow(cell.to_numpy(dtype=float),
               aspect="auto", cmap=ListedColormap(_STATE_COLORS), vmin=-0.5,
-              vmax=2.5, interpolation="nearest")
+              vmax=2.5, interpolation="nearest")    # light cell frames: a white cell then reads as an (empty) cell rather
+    # than as blank canvas
+    ax.set_axisbelow(False)
+    ax.set_xticks(np.arange(-0.5, cell.shape[1] + 0.5, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, cell.shape[0] + 0.5, 1), minor=True)
+    ax.grid(which="minor", color="#DEDEDE", lw=0.25, alpha=0.9)
+    ax.tick_params(which="minor", length=0)
     x = 0
     for bi, b in enumerate(blocks):
         n = int(b["_n"])
@@ -181,22 +224,24 @@ def _draw_heat(ax, cell: pd.DataFrame, blocks: list[dict]):
         s.set_visible(False)
 
 
-def _draw_right_bars(ax, frame: pd.DataFrame, blocks: list[dict],
-                     cola: str, colb: str) -> None:
-    """Per-locus stacked amp/del frequencies, one thin bar per cohort."""
+def _draw_right_bars(ax, frame: pd.DataFrame, blocks: list[dict]) -> None:
+    """One panel, one stacked amp/del bar per cohort (upper = cohort A,
+    lower = cohort B), with the combined frequency printed beside each bar.
+
+    The cohort is encoded by **position** (upper/lower), never by colour:
+    the vermillion/blue fills carry the Amp/Del direction, so no colour is
+    doing double duty here.
+    """
     yy = np.arange(len(frame))
     h = 0.30
-    for bi, cohort_c in ((0, cola), (1, colb)):
-        ycen = yy - (0.17 if bi == 0 else -0.17)
+    for bi, ycen in ((0, yy - 0.17), (1, yy + 0.17)):
         amp = frame[f"amp_{bi}"].to_numpy(float)
         dele = frame[f"del_{bi}"].to_numpy(float)
-        ax.barh(ycen, amp, height=h, color=_AMP, edgecolor=cohort_c,
-                linewidth=0.7)
+        ax.barh(ycen, amp, height=h, color=_AMP, edgecolor="white",
+                linewidth=0.3)
         ax.barh(ycen, dele, left=amp, height=h, color=_DEL,
-                edgecolor=cohort_c, linewidth=0.7)
+                edgecolor="white", linewidth=0.3)
         for y, f_ in zip(ycen, amp + dele):
-            if f_ <= 0.002:
-                continue
             ax.text(f_ + 0.02, y, f"{f_:.2f}", fontsize=4.6, va="center",
                     ha="left", color="#454545")
     ax.set_xlim(0, 1.0)
@@ -206,12 +251,13 @@ def _draw_right_bars(ax, frame: pd.DataFrame, blocks: list[dict],
     ax.set_xticklabels(["0", ".5", "1"], fontsize=5.5)
     ax.tick_params(length=2, pad=1)
     ax.set_xlabel("freq", fontsize=6, labelpad=1)
-    ax.legend([Patch(facecolor="#ffffff", edgecolor=cola, linewidth=1.2),
-               Patch(facecolor="#ffffff", edgecolor=colb, linewidth=1.2)],
-              [blocks[0]["label"], blocks[1]["label"]], frameon=False,
-              fontsize=6, loc="lower center", bbox_to_anchor=(0.5, 1.06),
-              handlelength=1.4, handletextpad=0.3, columnspacing=0.6, ncol=1,
-              title="cohort edge", title_fontsize=6)
+    ax.grid(axis="x", alpha=0.15)
+    ax.legend([Patch(facecolor="#ffffff", edgecolor="#888888", linewidth=0.9)],
+              [f"upper = {blocks[0]['label']}, "
+               f"lower = {blocks[1]['label']}"],
+              frameon=False, fontsize=5.6, loc="lower center",
+              bbox_to_anchor=(0.5, 1.06), handlelength=1.2,
+              handletextpad=0.4)
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
 
@@ -243,35 +289,34 @@ def plot_oncoplot(onco: dict[str, Any], cfg: dict[str, Any]) -> None:
     cell = pd.DataFrame(list(frame["cell"].values), columns=matrix.columns)
     n_samples = int(cell.shape[1])
     total = int((cell > 0).any(axis=0).sum())
-    labels = []
-    for _, r in frame.iterrows():
-        base = str(r["cytoband"])
-        if r["mixed"]:
-            base += \
-                f"  ({r['chrom']}:{int(r['start']) // 10**6}Mb)"
-        labels.append(base)
+    labels = [str(v) for v in frame["locus_label"]]
 
-    # waterfall: inside each cohort block the samples *without* the top
-    # locus come first (left) and the altered ones last (right); ties are
-    # ordered by total calls descending so the shapes fall off smoothly
+    # waterfall: samples are ordered by their alteration *pattern* over the
+    # ranked loci (hierarchical: peak 1's 有/无 split, then peak 2 within
+    # that group, then peak 3 ...), most-altered patterns first (left);
+    # remaining ties fall back to the total call count descending
     calls_per_sample = cell.gt(0).sum(axis=0)
-    top_hit = cell.iloc[0].gt(0)
+    altered = cell.gt(0)                       # rows = ranked loci
+    pattern = dict(zip(altered.columns, [tuple(bool(v) for v in altered[c])
+                                         for c in altered.columns]))
     for b in blocks:
-        cols = [c for c in b["columns"] if c in cell.columns]
+        cols = [c for c in b["columns"] if c in altered.columns]
         cols = sorted(cols, key=lambda c: (
-            not bool(top_hit.get(c, False)), -float(calls_per_sample.get(c, 0))))
+            tuple(not v for v in pattern[c]),
+            -float(sum(pattern[c])),
+            -float(calls_per_sample.get(c, 0)), str(c)))
         b["columns"] = cols
         b["_n"] = len(cols)
     cell = cell.loc[:, [c for b in blocks for c in b["columns"]]]
 
-    strip_h, header_h, note_h = 0.85, 0.46, 0.0
+    strip_h, header_h = 0.55, 0.46
     heat_h = 0.34 * len(frame) + 0.45
-    fig_h = strip_h + header_h + note_h + heat_h
+    fig_h = strip_h + header_h + heat_h
     fig = plt.figure(figsize=(theme.capped_width(cfg, 7.0), fig_h))
     gs = fig.add_gridspec(
-        2, 2, width_ratios=[1, 0.36], wspace=0.05,
+        2, 2, width_ratios=[1, 0.30], wspace=0.06,
         height_ratios=[strip_h, heat_h],
-        top=1.0 - header_h / fig_h, bottom=note_h / fig_h,
+        top=1.0 - header_h / fig_h, bottom=0.22 / fig_h,
         left=0.19, right=0.97)
     ax_top = fig.add_subplot(gs[0, 0])
     ax = fig.add_subplot(gs[1, 0])
@@ -281,13 +326,13 @@ def plot_oncoplot(onco: dict[str, Any], cfg: dict[str, Any]) -> None:
     _draw_heat(ax, cell, blocks)
     ax.set_yticks(range(len(frame)))
     ax.set_yticklabels(labels, fontsize=5)
-    _draw_right_bars(ax_b, frame, blocks, cola, colb)
+    _draw_right_bars(ax_b, frame, blocks)
 
     x = 0
     for b in blocks:
         n = int(b["_n"])
         ax_top.annotate(f"{b['label']}  (n={n})",
-                        xy=(x + n / 2, 1.04),
+                        xy=(x + n / 2, 1.12),
                         xycoords=("data", "axes fraction"),
                         ha="center", va="bottom", fontsize=6.5,
                         fontweight="bold", annotation_clip=False)
