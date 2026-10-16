@@ -74,6 +74,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   segmentation count rho = 0.90 and ~ purity rho = -0.60 — interpret on
   the informative tier with a purity floor; between-cohort comparison
   null (MW p = 0.43-0.91).
+- **OncoPlot v2 (P1, `P1_oncoplot_v2`)** — the mirrored sibling of the
+  v1 OncoPlot: `freq (A) | waterfall A | peak labels | waterfall B |
+  freq (B)`, both waterfalls at **equal width** and each half's cascade
+  falling *away* from the centre (most-altered samples hug the labels), so
+  the two cohorts are read side by side in the same space.  Frequency bars
+  flank the labels growing outward with the combined frequency at the tip
+  (`freq (<cohort>)` labels the cohort; colour still means Amp/Del only);
+  the two top calls strips share one y scale and the `calls/sample` label
+  is rotated upright.  Rows/cells/labels/header are v1's.  Both figures are
+  drawn on every P1 run (v1 unchanged: `_draw_top_strip` keeps its
+  horizontal label via the new `rot90` flag).  Documented in
+  `docs/figures.md`.
 - **OncoPlot (P1, `P1_oncoplot`)** — a ComplexHeatmap-style companion to the
   P1 OncoPrint: rows are union peak loci cut at GISTIC's **narrow** (Peak
   Limits) cores, labelled `cytoband (narrow-span/wide-span)` and ranked by

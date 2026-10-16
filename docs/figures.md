@@ -113,6 +113,38 @@ peak row per genomic **locus**, the two cohorts' samples side by side.
 
 
 
+## OncoPlot v2 (P1, `P1_oncoplot_v2`) — mirrored waterfalls
+
+The same data as the v1 OncoPlot, redrawn as a **mirrored pair of
+waterfalls** around a central label column, so the two cohorts are compared
+in the same visual space instead of one after the other.  Both figures are
+emitted on every P1 run; v1 stays for the sample-continuum reading, v2 for
+the side-by-side reading.
+
+- **Layout, left to right**: `freq (A) | waterfall A | peak labels |
+  waterfall B | freq (B)`.  The two waterfalls share the heat area
+  **equally**, so a cohort with fewer samples gets visibly wider cells —
+  choose this figure when the comparison is about *shape*, the
+  proportional-width v1 when it is about the samples.
+- **Mirror convention**: each half's cascade *falls away from the centre* —
+  cohort A's samples are ordered least-altered-first leftward, cohort B's
+  most-altered-first rightward, so the most-altered samples of both cohorts
+  hug the labels and the silhouette is highest in the middle.  (This is the
+  reverse of v1's left-to-right ordering for cohort A; flipping it is the
+  `descending` argument of `oncoplot.py::_waterfall_order`.)
+- **Per-cohort frequency bars** flank the labels and grow *outward* (A
+  leftwards, B rightwards) with the combined amp+del frequency printed at
+  the bar tip; each panel's axis is labelled `freq (<cohort>)`, so the
+  cohort is named, never colour-coded (vermillion/blue stay Amp/Del).
+- **Top** = one calls strip per cohort, both pinned to a **shared y scale**
+  (the max over both cohorts) so bar heights are directly comparable; the
+  `calls/sample` label is rotated upright next to the ticks, and only the
+  left strip carries it.
+- Rows, cell states, light frames, narrow-peak labels and the
+  "Altered in k (p%) of n" header are identical to v1.
+
+
+
 ## CNV-landscape panels (P9 event frequencies, P11 focal landscape)
 
 These two figure families share one convention that is the **reverse of the

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 from gistic_compare.pairwise_peak import build_onco_data
 
@@ -107,5 +108,50 @@ def test_oncoplot_loci_merge_and_ranking(pairwise_config, tmp_path):
 
     plot_oncoplot(o, cfg)
     name = "P1_oncoplot_a_vs_b"
+    for ext in ("png", "pdf"):
+        assert (cfg["output"]["_figures"] / f"{name}.{ext}").exists()
+
+
+def test_oncoplot_v2_mirror_write(pairwise_config):
+    """v2: the mirrored figure draws both cohorts at equal width with the
+    cascades facing the centre, and shares one calls-strip scale."""
+    from gistic_compare import io_gistic
+    from gistic_compare.config import assign_comparison_kinds, load_config
+    from gistic_compare.pairwise_peak import build_onco_data
+    from gistic_compare.plotting.oncoplot import (
+        _TOP_ROWS,
+        _locus_table,
+        _waterfall_order,
+        plot_oncoprint_v2,
+    )
+
+    cfg = load_config(pairwise_config)
+    data = io_gistic.load_all(cfg)
+    assign_comparison_kinds(cfg, data)
+    o = build_onco_data(cfg, data, cfg["analysis"]["q_thresholds"][0])[0]
+
+    blocks = [dict(b) for b in o["blocks"]]
+    for b in blocks:
+        b["_n"] = len(b["columns"])
+    frame = _locus_table(o["meta"], o["matrix"], blocks)
+    assert len(frame) >= 2
+    cell = pd.DataFrame(list(frame.head(_TOP_ROWS)["cell"].values),
+                        columns=o["matrix"].columns)
+
+    # v1 puts the most-altered pattern first (left, descending); v2 flips
+    # cohort A so its cascade falls away from the centre labels
+    a = blocks[0]["columns"]
+    desc = _waterfall_order(cell, a, descending=True)
+    asc = _waterfall_order(cell, a, descending=False)
+    assert sorted(desc) == sorted(asc)
+    altered = cell.gt(0)
+    r0 = altered.iloc[0]           # the top-ranked row drives the split
+    if r0.any():
+        assert bool(r0[desc[0]]) is True    # altered side first, descending
+    if not r0.all():
+        assert bool(r0[asc[0]]) is False    # unaltered side first, mirrored
+
+    plot_oncoprint_v2(o, cfg)
+    name = "P1_oncoplot_v2_a_vs_b"
     for ext in ("png", "pdf"):
         assert (cfg["output"]["_figures"] / f"{name}.{ext}").exists()
