@@ -273,6 +273,36 @@ on per-sample absolute-CN summaries.
   Purity and ploidy are simultaneously **confounders of every
   logR-based comparison** in P1-P10 — this module is where their
   between-cohort balance is checked.
+- **LOH within WGD strata** (same metrics table, `<comp> [WGD+ only]` /
+  `[WGD- only]` rows): the pooled LOH test mixes a WGD+ stratum — where
+  minor CN >= 1 is common genome-wide and LOH segments are therefore
+  rarer — with a WGD- stratum, so its size and even its **sign** follow
+  the cohorts' WGD composition.  In the CUE/CHB data the pooled medians
+  read CHB > CUE (0.148 vs 0.132) while *both* strata read CUE >= CHB
+  (WGD+ 0.217 vs 0.205; WGD- 0.032 vs 0.002) — a composition artifact
+  (the pooled difference is small: p = 0.63).  Purity matters in the
+  same direction: Spearman(purity, loh_frac) = -0.55, so low-purity
+  samples under-report LOH.  Quote the stratified rows, not the pooled
+  one.  (`ABS_loh_wgd_strata` draws them.)
+- **LOH vs GISTIC deletion at the same loci** (`ABS_loh_del_cross.tsv`,
+  figure `ABS_loh_del_cross`): every (sample x Del peak, q <= 0.25) pair
+  is classified **del+LOH / del-only / LOH-only / neither** by
+  intersecting the allele-specific segments with GISTIC's own per-sample
+  del call (LOH = >= `loh_cross_cover` of the peak's core — narrow Peak
+  Limits by default, `loh_cross_core` — covered by `cn_minor == 0`).
+  GISTIC calls deletion from *total* copy number, so copy-neutral LOH
+  (`cn_total == 2 & cn_minor == 0`) is structurally invisible to the del
+  track; the LOH-only class is therefore split into
+  `loh_only_cnloh` (no dosage change — the del frequency cannot see it
+  at all) and `loh_only_cnloss` (dosage lost but under GISTIC's
+  amplitude call).  In the CUE/CHB data 8-9% of all pairs are LOH-only
+  and about half of those are copy-neutral, and at individual small
+  peaks the LOH fraction exceeds the del frequency by a wide margin
+  (e.g. CUE 19p13.3: del call 23%, LOH 46%).  Counts are per cohort, so
+  the table answers "how is this locus altered", the PC-space analogue
+  of P1's peak frequency.  Fractions use the cohort's samples with a
+  successful fit (GISTIC's own denominator, unless a fit failed);
+  `n_covered` records how many actually have segments over the peak.
 - **CN-space burden**: P9's three-level counting transplanted into
   absolute copy-number space (neutral band +/- `cn_focal_band` copies;
   broad arm event when the length-weighted mean CN exceeds

@@ -86,6 +86,77 @@ def test_abs_end_to_end(pairwise_config, tmp_path):
     assert (peaks["crude_or"] > 0).all()
 
 
+def test_abs_loh_analyses(pairwise_config, tmp_path):
+    """LOH x GISTIC-Del cross table + WGD-stratified LOH rows (and the two
+    figures) on the synthetic tables."""
+    import yaml
+    synth_root = pairwise_config.parent
+    synth_absolute_tables(synth_root / "A", "a", seed=81,
+                          truth=dict(wgd_frac=0.5, purity_mean=0.80,
+                                     ploidy_mean=3.2),
+                          sample_names=[f"A{i}" for i in range(1, 9)])
+    synth_absolute_tables(synth_root / "B", "b", seed=82,
+                          truth=dict(wgd_frac=0.5, purity_mean=0.60,
+                                     ploidy_mean=2.0),
+                          sample_names=[f"B{i}" for i in range(1, 9)])
+    cfg = yaml.safe_load(open(pairwise_config))
+    cfg.setdefault("analysis", {})["absolute_cn"] = {"tool": "ascat"}
+    path = pairwise_config.parent / "config_abs_loh.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+
+    from gistic_compare.cli import main
+    out = tmp_path / "out_abs_loh"
+    assert main(["--config", str(path), "--modules", "ABS",
+                 "--outdir", str(out)]) == 0
+    tables = out / "test_pair" / "tables"
+    figures = out / "test_pair" / "figures"
+    assert not (tables / "ABS_skipped.txt").exists()
+
+    # the cross: one row per (cohort, Del peak); the four classes partition
+    # the covered samples and the LOH-only class is split by mechanism
+    cross = pd.read_csv(tables / "ABS_loh_del_cross.tsv", sep="\t")
+    assert len(cross), "no Del peak x sample pairs — synth geometry broken"
+    for col in ("del_loh", "del_only", "loh_only", "neither", "n_loh",
+                "n_cnloh", "loh_only_cnloh", "loh_only_cnloss", "core",
+                "gistic_freq", "n_samples"):
+        assert col in cross.columns, col
+    total = (cross["del_loh"] + cross["del_only"] + cross["loh_only"]
+             + cross["neither"])
+    assert (total == cross["n_covered"]).all()
+    assert (cross["n_covered"] <= cross["n_samples"]).all()
+    assert (cross["n_loh"] == cross["del_loh"] + cross["loh_only"]).all()
+    assert (cross["loh_only_cnloh"] + cross["loh_only_cnloss"]
+            <= cross["loh_only"]).all()
+    assert (cross["core"] == "narrow").all()
+    assert {"a", "b"} <= set(cross["cohort"])
+
+    # the stratified LOH rows sit next to the pooled ones, and exist
+    # exactly for the strata that carry >= 3 samples per cohort (the
+    # module's own threshold)
+    metrics = pd.read_csv(tables / "ABS_purity_ploidy.tsv", sep="\t")
+    strat = metrics[metrics["comparison"].str.contains("only]", regex=False)]
+    sc = pd.read_csv(tables / "ABS_cn_scores.tsv", sep="\t")
+    expected = set()
+    for sval, slab in ((1, "WGD+ only"), (0, "WGD- only")):
+        sub = sc[sc["wgd_status"] == sval]
+        if (sub["cohort"] == "a").sum() >= 3 and (sub["cohort"] == "b").sum() >= 3:
+            expected.add(f"a_vs_b [{slab}]")
+    assert set(strat["comparison"]) == expected
+    assert {"loh_frac", "cnloh_frac"} <= set(strat["metric"])
+    pooled = metrics[~metrics["comparison"].str.contains("only]",
+                                                         regex=False)]
+    assert {"loh_frac", "cnloh_frac"} <= set(pooled["metric"])
+
+    summary = pd.read_csv(tables / "ABS_summary.tsv", sep="\t")
+    for col in ("loh_only_frac_a", "loh_only_frac_b",
+                "loh_only_cnloh_frac_a", "loh_only_cnloh_frac_b"):
+        assert col in summary.columns, col
+
+    for name in ("ABS_loh_del_cross.png", "ABS_loh_wgd_strata.png",
+                 "ABS_metric_dists.png"):
+        assert (figures / name).exists(), name
+
+
 def test_abs_skip_without_tables(pairwise_config, tmp_path):
     from gistic_compare.cli import main
     out = tmp_path / "out_abs_skip"

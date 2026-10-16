@@ -55,6 +55,11 @@ def plot_abs_metric_dists(metrics: pd.DataFrame, scores: pd.DataFrame, cfg
     """purity / ploidy / LOH / CN-LOH distributions per cohort."""
     if metrics is None or metrics.empty or scores is None or scores.empty:
         return
+    # stratified rows ("<comp> [WGD+ only]" ...) are drawn by
+    # plot_loh_wgd_strata; the boxplots here show the pooled comparison
+    metrics = metrics[~metrics["comparison"].str.contains("\\[", na=False)]
+    if metrics.empty:
+        return
     style(cfg)
     pal = _palette(cfg)
     comps = list(dict.fromkeys(metrics["comparison"]))
@@ -192,7 +197,11 @@ def plot_wgd_class_stacked(cn_tables: dict, cfg) -> None:
                         ha="center", va="center", fontsize=6,
                         color="white" if c != "0x" else "#333333")
         bottom += v
-    chi2, p_chi, _, _ = stats.chi2_contingency(tab.to_numpy())
+    try:
+        chi2, p_chi, _, _ = stats.chi2_contingency(tab.to_numpy())
+        chi_txt = f"$\\chi^2$={chi2:.2f}, p={p_chi:.2f}"
+    except ValueError:      # a class is empty in one cohort: no test
+        chi_txt = "no test (empty class)"
     excl = {c: len(t) - int(tab.loc[c].sum())
             for c, t in zip(cohs, cn_tables.values())}
     ax.set_xticks(range(len(cohs)))
@@ -200,8 +209,8 @@ def plot_wgd_class_stacked(cn_tables: dict, cfg) -> None:
                         f"excl. {excl[c]})" for c in cohs], fontsize=7)
     ax.set_ylabel("Fraction of samples")
     ax.set_ylim(0, 1.0)
-    ax.set_title(f"Strict (nMinor$\\geq$2 signature)  "
-                 f"$\\chi^2$={chi2:.2f}, p={p_chi:.2f}", fontsize=7.5)
+    ax.set_title(f"Strict (nMinor$\\geq$2 signature)  {chi_txt}",
+                 fontsize=7.5)
     ax.tick_params(labelsize=6.5)
     handles, labels = ax.get_legend_handles_labels()
 
@@ -350,10 +359,215 @@ def plot_hrd_dists(hrd: pd.DataFrame, cfg) -> None:
         save(fig, cfg, f"ABS_hrd_dist_{metric}")
 
 
+_LOH_METRICS = (("loh_frac", "LOH fraction"),
+                ("cnloh_frac", "copy-neutral LOH"))
+
+
+def plot_loh_wgd_strata(metrics: pd.DataFrame, scores: pd.DataFrame, cfg
+                        ) -> None:
+    """LOH by cohort *within* WGD strata (one comparison per figure).
+
+    The pooled test mixes a WGD+ stratum (minor CN >= 1 is common, so LOH
+    segments are rarer) with a WGD- stratum; its result therefore follows
+    the cohorts' WGD composition and can even reverse sign (true in the
+    CUE/CHB data).  Boxes are per cohort within each stratum, with the
+    stratified Mann-Whitney p; the pooled p is in the panel title for
+    contrast.  The figure pins itself to the first stratified comparison so
+    the annotations can never mix comparisons.
+    """
+    if metrics is None or metrics.empty or scores is None or scores.empty:
+        return
+    if "wgd_status" not in scores.columns:
+        return
+    strat = metrics[metrics["comparison"].str.contains("\\[", na=False)]
+    if strat.empty:
+        return
+    comp = str(strat["comparison"].iloc[0]).split(" [")[0]
+    ca, cb = comp.split("_vs_")[:2]
+    cohs = [ca, cb]
+    strat = strat[strat["comparison"].str.startswith(comp)]
+    if "cohort" in scores.columns:
+        scores = scores[scores["cohort"].isin(cohs)]
+    style(cfg)
+    pal = _palette(cfg)
+    fig, axes = plt.subplots(1, 2, figsize=theme.figsize(
+        cfg, total_w=6.8, panel_h=3.0))
+    for ax, (metric, label) in zip(axes, _LOH_METRICS):
+        pooled = metrics[(metrics["metric"] == metric)
+                         & (metrics["comparison"] == comp)]
+        xs_all: list[float] = []
+        labs_all: list[str] = []
+        for gi, (sval, slab) in enumerate(((0, "WGD-"), (1, "WGD+"))):
+            data = []
+            for ci, c in enumerate(cohs):
+                v = scores.loc[(scores["cohort"] == c)
+                               & (scores["wgd_status"] == sval),
+                               metric].dropna().to_numpy(float)
+                data.append(v)
+            pos = [gi * 3.0 + ci * 0.9 for ci in range(len(cohs))]
+            if all(len(v) == 0 for v in data):
+                continue
+            bp = ax.boxplot(data, positions=pos, widths=0.62,
+                            patch_artist=True,
+                            medianprops=dict(color="#333333"))
+            for patch, c in zip(bp["boxes"], cohs):
+                patch.set_facecolor(pal.get(c, "#888888"))
+                patch.set_alpha(0.45)
+            rng = np.random.default_rng(gi * 7 + int(sval))
+            for xi, v, c in zip(pos, data, cohs):
+                if len(v) == 0:
+                    continue
+                ax.scatter(rng.normal(xi, 0.07, len(v)), v, s=5,
+                           color=pal.get(c, "#888888"), alpha=0.55,
+                           edgecolor="none", zorder=4)
+            xs_all += pos
+            labs_all += [c.upper() for c in cohs]
+            r = strat[(strat["metric"] == metric)
+                      & (strat["comparison"].str.contains(f"{slab} only",
+                                                          regex=False))]
+            txt = slab
+            if len(r):
+                rr = r.iloc[0]
+                txt = (f"{slab}:  {cohs[0]} {rr['median_a']:.3f} vs "
+                       f"{cohs[1]} {rr['median_b']:.3f}\n"
+                       f"MW p={rr['p_mw']:.2f} (n={rr['n_a']}/{rr['n_b']})")
+            ax.annotate(txt, xy=(float(np.mean(pos)), 1.005),
+                        xycoords=("data", "axes fraction"), ha="center",
+                        va="bottom", fontsize=5.6, color="#333333",
+                        linespacing=1.4)
+        ax.axvline(1.35, color="#BBBBBB", lw=0.6, ls=":")
+        ptxt = ""
+        if len(pooled):
+            ptxt = (f"  \u2014  pooled: p={pooled['p_mw'].iloc[0]:.2f} "
+                    f"({pooled['median_a'].iloc[0]:.3f} vs "
+                    f"{pooled['median_b'].iloc[0]:.3f})")
+        ax.set_xticks(xs_all)
+        ax.set_xticklabels(labs_all, fontsize=6.5)
+        ax.set_ylabel(label, fontsize=7)
+        ax.set_title(f"{label}, by WGD stratum{ptxt}", fontsize=7, pad=22)
+        ax.tick_params(labelsize=6)
+        ax.grid(axis="y", alpha=0.2)
+    fig.suptitle(f"Module ABS \u2014 {comp}: LOH by cohort within WGD strata "
+                 "(the pooled comparison is confounded by WGD composition)",
+                 fontsize=8)
+    theme.finalize(fig, "tight")
+    save(fig, cfg, "ABS_loh_wgd_strata")
+
+
+_LOH_CLASS_COLORS = {
+    "del+LOH": theme.OKABE["vermillion"],
+    "del-only": theme.OKABE["sky_blue"],
+    "LOH-only": theme.OKABE["orange"],
+    "neither": "#DDDDDD",
+}
+
+
+def plot_loh_del_cross(cross: pd.DataFrame, cfg) -> None:
+    """LOH vs GISTIC's del call at the same peaks.
+
+    Left: per peak, GISTIC's del frequency (x) against the fraction of the
+    cohort with LOH at that peak (y) — points above the diagonal are LOH
+    the del track under-reports, sized by peak width.  Right: composition
+    of the four classes (del+LOH / del-only / LOH-only / neither) for each
+    cohort's most LOH-only peaks plus the cohort total.  One comparison per
+    figure (the first in the table).
+    """
+    if cross is None or cross.empty:
+        return
+    comp = str(cross["comparison"].iloc[0])
+    cross = cross[cross["comparison"] == comp]
+    if cross.empty:
+        return
+    style(cfg)
+    pal = _palette(cfg)
+    present = list(dict.fromkeys(cross["cohort"]))
+    cohs = [c for c in comp.split("_vs_") if c in present] or present
+    fig, axes = plt.subplots(1, 2, figsize=theme.figsize(
+        cfg, total_w=7.0, panel_h=3.4),
+        gridspec_kw=dict(width_ratios=[1.0, 1.15]))
+
+    ax = axes[0]
+    lim = float(np.nanmax([cross["gistic_freq"].max(),
+                           cross["loh_frac_any"].max()])) * 1.12
+    lim = max(lim, 0.1)
+    ax.plot([0, lim], [0, lim], color="#999999", lw=0.7, ls="--")
+    for c in cohs:
+        d = cross[cross["cohort"] == c]
+        ax.scatter(d["gistic_freq"], d["loh_frac_any"],
+                   s=np.clip(np.log10(d["kb"].to_numpy(float) + 10) * 9, 6, 90),
+                   color=pal.get(c, "#888888"), alpha=0.75,
+                   edgecolor="none", label=c.upper())
+    top = cross.nlargest(4, "loh_only_frac")
+    for _, r in top.iterrows():
+        ax.annotate(f"{r['cohort'].upper()} {r['cytoband']}",
+                    xy=(r["gistic_freq"], r["loh_frac_any"]),
+                    xytext=(3, 3), textcoords="offset points", fontsize=5.2,
+                    color="#444444")
+    ax.set_xlim(0, lim)
+    ax.set_ylim(0, lim)
+    ax.set_xlabel("GISTIC del frequency (amplitude call)", fontsize=7)
+    ax.set_ylabel("LOH frequency at the same peak", fontsize=7)
+    ax.set_title("above the line = LOH the del call misses\n"
+                 "(marker size $\\propto$ peak width)", fontsize=6.8)
+    ax.legend(frameon=False, fontsize=6, loc="upper left")
+    ax.tick_params(labelsize=6)
+    ax.grid(alpha=0.2)
+
+    ax = axes[1]
+    rows = []
+    for c in cohs:
+        d = cross[cross["cohort"] == c]
+        n = float(d["n_samples"].sum())
+        rows.append(dict(label=f"{c.upper()}  all Del peaks",
+                         frac=[d["del_loh"].sum() / n,
+                               d["del_only"].sum() / n,
+                               d["loh_only"].sum() / n,
+                               d["neither"].sum() / n]))
+        for _, r in d.nlargest(6, "loh_only_frac").iterrows():
+            m = float(r["n_samples"])
+            rows.append(dict(
+                label=f"  {r['cytoband']} ({r['kb']:.0f} kb)",
+                frac=[r["del_loh"] / m, r["del_only"] / m,
+                      r["loh_only"] / m, r["neither"] / m]))
+    order = ["del+LOH", "del-only", "LOH-only", "neither"]
+    ypos = np.arange(len(rows))[::-1]
+    left = np.zeros(len(rows))
+    for k, cls in enumerate(order):
+        v = np.array([r["frac"][k] for r in rows])
+        ax.barh(ypos, v, left=left, height=0.72,
+                color=_LOH_CLASS_COLORS[cls], edgecolor="white",
+                linewidth=0.4, label=cls)
+        for y, vv, ll in zip(ypos, v, left):
+            if vv >= 0.09:
+                ax.text(ll + vv / 2, y, f"{vv:.0%}", ha="center",
+                        va="center", fontsize=5,
+                        color="white" if cls in ("del+LOH", "LOH-only")
+                        else "#333333")
+        left += v
+    ax.set_yticks(ypos)
+    ax.set_yticklabels([r["label"] for r in rows], fontsize=5.6)
+    ax.set_xlim(0, 1.0)
+    ax.set_xlabel("fraction of the cohort's samples", fontsize=7)
+    ax.set_title("composition of the four classes per peak\n"
+                 "(samples $\\times$ Del peaks, q$\\leq$0.25)",
+                 fontsize=6.8)
+    handles, labels = ax.get_legend_handles_labels()
+    ax.tick_params(labelsize=6)
+    ax.grid(axis="x", alpha=0.2)
+    fig.legend(handles, labels, loc="outside center right", frameon=False,
+               fontsize=6.5, title="class", title_fontsize=6.5)
+    fig.suptitle(f"Module ABS \u2014 {comp}: LOH vs GISTIC deletion at the "
+                 "same loci", fontsize=8)
+    theme.finalize(fig, "constrained", wspace=0.35)
+    save(fig, cfg, "ABS_loh_del_cross")
+
+
 def figures_abs(res: dict, cfg) -> None:
     plot_abs_wgd(res.get("wgd"), cfg)
     plot_abs_metric_dists(res.get("metrics"), res.get("scores"), cfg)
+    plot_loh_wgd_strata(res.get("metrics"), res.get("scores"), cfg)
     plot_abs_purity_adjusted(res.get("purity_peaks"), cfg)
+    plot_loh_del_cross(res.get("loh_del"), cfg)
     plot_wgd_class_stacked(res.get("cn_tables"), cfg)
     plot_ploidy_rank(res.get("cn_tables"), cfg)
     hrd = None

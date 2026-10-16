@@ -58,8 +58,13 @@ least one axis), P10 volcano, P8 stability panels, and the peak-gene labels
 of `P11_focal_landscape` (variant — see the landscape section below).
 Module ABS adds
 `ABS_wgd_freq` (WGD+ fraction bars with Wilson CIs),
-`ABS_metric_dists` (purity/ploidy/LOH/CN-LOH per cohort), and
-`ABS_purity_adjusted` (crude vs purity-adjusted per-peak OR).
+`ABS_metric_dists` (purity/ploidy/LOH/CN-LOH per cohort),
+`ABS_loh_wgd_strata` (LOH per cohort *within* WGD strata — the pooled
+comparison is confounded by WGD composition), `ABS_purity_adjusted`
+(crude vs purity-adjusted per-peak OR), and `ABS_loh_del_cross`
+(GISTIC's del frequency vs the LOH frequency at the same peaks, plus the
+del+LOH / del-only / LOH-only / neither composition per peak — the
+LOH-only class is where copy-neutral LOH hides from the del track).
 
 - No descriptive titles inside figures — keep captions in your manuscript.
 
@@ -110,8 +115,6 @@ peak row per genomic **locus**, the two cohorts' samples side by side.
   "**Altered in k (p%) of n**" header that ComplexHeatmap prints.
 - A bottom margin is reserved so the frequency axis and its label are never
   cropped.
-
-
 
 ## OncoPlot v2 (P1, `P1_oncoplot_v2`) — mirrored waterfalls
 

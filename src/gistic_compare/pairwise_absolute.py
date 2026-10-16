@@ -61,7 +61,24 @@ manifest column) or ASCAT's built-in inference — tumour-only makes
 out of the het set).
 
 Outputs: ABS_wgd.tsv, ABS_purity_ploidy.tsv, ABS_cn_scores.tsv,
-         ABS_cn_tests.tsv, ABS_purity_adjusted_peaks.tsv, ABS_summary.tsv
+         ABS_cn_tests.tsv, ABS_purity_adjusted_peaks.tsv,
+         ABS_loh_del_cross.tsv, ABS_summary.tsv
+
+Two LOH-specific analyses beyond the per-sample fractions, both of which
+need the allele-specific segments (not just the per-sample metrics):
+
+  WGD-stratified LOH  the pooled LOH test mixes a WGD+ stratum (minor
+                      CN >= 1 is common, so fewer LOH segments survive)
+                      with a WGD- stratum; its sign follows the cohorts'
+                      WGD composition, so LOH is also compared *within*
+                      each WGD stratum (`<comp> [WGD+ only]` /
+                      `[WGD- only]` rows in the metrics table).
+  LOH x Del cross     every (sample x Del peak) pair is classified
+                      del+LOH / del-only / LOH-only / neither, splitting
+                      LOH-only into copy-neutral (no dosage change —
+                      structurally invisible to GISTIC's del track) and
+                      CN-loss (below GISTIC's amplitude call); see
+                      ``_loh_del_cross``.
 """
 
 from __future__ import annotations
@@ -105,6 +122,8 @@ def _abs_cfg(cfg: dict[str, Any], rcfg: dict) -> dict:
     return dict(
         tool=str(a.get("tool", "ascat")),
         auto_run=bool(a.get("auto_run", False)),
+        loh_cross_core=str(a.get("loh_cross_core", "narrow")),
+        loh_cross_cover=float(a.get("loh_cross_cover", 0.5)),
         tables_dir=(a.get("tables_dir") or None),
         raw_dir=str(a.get("raw_dir", "raw_snp6")),
         manifest=str(a.get("manifest", "absolute_manifest.tsv")),
@@ -690,6 +709,143 @@ def _binary_matrix_cfg(cfg: dict[str, Any], data: dict[str, dict],
 
 
 # ---------------------------------------------------------------------------
+# LOH x GISTIC-Del cross (mechanism, not frequency)
+# ---------------------------------------------------------------------------
+
+def _loh_del_cross(cfg: dict[str, Any], data: dict[str, dict],
+                   seg_tables: dict[str, pd.DataFrame],
+                   cn_tables: dict[str, pd.DataFrame],
+                   acfg: dict) -> pd.DataFrame:
+    """Classify every (sample x Del peak) pair as del+LOH / del-only /
+    LOH-only / neither, per cohort.
+
+    GISTIC calls deletion from the **total** copy number at a peak, so a
+    locus can lose an allele without any loss of dosage (copy-neutral LOH,
+    ``cn_total == 2 & cn_minor == 0``) and stay invisible to the del track.
+    Intersecting the allele-specific segments with GISTIC's own per-sample
+    del calls shows how much of the LOH at those loci the del frequency
+    misses.  A pair counts as LOH when at least ``loh_cross_cover`` of the
+    peak's core (``loh_cross_core``: narrow Peak Limits by default) is
+    covered by ``cn_minor == 0`` segments; the LOH-only class is split into
+    CN-neutral (no dosage change — structurally invisible to GISTIC) and
+    CN-loss (dosage lost but below GISTIC's amplitude call) counts.
+
+    The four classes partition the **covered** samples (``n_covered``;
+    segments tile the genome, so this equals ``n_samples`` unless a cohort
+    has a gap at that locus), and the fractions use ``n_samples`` — the
+    cohort's samples with a successful fit, i.e. GISTIC's own denominator
+    (``freq_altered``, reported as ``gistic_freq``) unless a fit failed.
+    """
+    q_main = float(((cfg.get("analysis") or {}).get("q_thresholds")
+                    or [0.25])[0])
+    core = "wide" if str(acfg.get("loh_cross_core", "narrow")) == "wide" \
+        else "narrow"
+    cover = float(acfg.get("loh_cross_cover", 0.5))
+    fam = {c for cmp_ in cfg["comparisons"] for c in (cmp_["a"], cmp_["b"])}
+    rows = []
+    for cid, seg in (seg_tables or {}).items():
+        if cid not in fam or seg is None or seg.empty:
+            continue
+        peaks = (data.get(cid) or {}).get("peaks")
+        if peaks is None or peaks.empty or "type" not in peaks.columns:
+            continue
+        cn = (cn_tables or {}).get(cid)
+        if cn is not None and "fit_ok" in cn.columns:
+            ok = set(cn.loc[pd.to_numeric(cn["fit_ok"], errors="coerce") == 1,
+                            "sample"])
+            if ok:
+                seg = seg[seg["sample"].isin(ok)]
+        samples = set(seg["sample"].unique())
+        if not samples:
+            continue
+        calls = data[cid].get("calls")
+        del_pairs = set()
+        if calls is not None and len(calls):
+            cl = calls[pd.to_numeric(calls["call"], errors="coerce") > 0]
+            del_pairs = set(zip(cl["peak_id"], cl["sample"]))
+        comp = next((f"{c['a']}_vs_{c['b']}" for c in cfg["comparisons"]
+                     if cid in (c["a"], c["b"])), cid)
+        pk = peaks[(peaks["type"] == "Del")
+                   & (pd.to_numeric(peaks["q"], errors="coerce") <= q_main)]
+        for _, p in pk.iterrows():
+            gc = "peak_" if core == "narrow" else "wide_"
+            chrom = str(p.get(f"{gc}chrom", "") or "")
+            cs = pd.to_numeric(p.get(f"{gc}start"), errors="coerce")
+            ce = pd.to_numeric(p.get(f"{gc}end"), errors="coerce")
+            if not chrom or not (np.isfinite(cs) and np.isfinite(ce)) \
+                    or ce <= cs:
+                continue
+            n = dict(del_loh=0, del_only=0, loh_only=0, neither=0,
+                     n_loh=0, n_cnloh=0, loh_only_cnloh=0,
+                     loh_only_cnloss=0, covered=0)
+            for smp, g in seg[seg["chrom"] == chrom].groupby("sample"):
+                ov = (np.minimum(g["end"].to_numpy(float), ce)
+                      - np.maximum(g["start"].to_numpy(float), cs)).clip(0)
+                ln = float(ov.sum())
+                if ln <= 0:
+                    continue
+                mn = g["cn_minor"].to_numpy(float)
+                tt = g["cn_total"].to_numpy(float)
+                lo = float(ov[mn == 0].sum()) >= cover * ln
+                cn_loh = lo and float(ov[(mn == 0) & (tt == 2)].sum()) \
+                    >= cover * ln
+                cn_loss = lo and float(ov[(mn == 0) & (tt < 2)].sum()) \
+                    >= cover * ln
+                is_del = (p["peak_id"], smp) in del_pairs
+                n["covered"] += 1
+                n["n_loh"] += int(lo)
+                n["n_cnloh"] += int(cn_loh)
+                if lo and is_del:
+                    n["del_loh"] += 1
+                elif lo:
+                    n["loh_only"] += 1
+                    n["loh_only_cnloh"] += int(cn_loh)
+                    n["loh_only_cnloss"] += int(cn_loss)
+                elif is_del:
+                    n["del_only"] += 1
+                else:
+                    n["neither"] += 1
+            if not n["covered"]:
+                continue
+            nsmp = len(samples)
+            rows.append(dict(
+                comparison=comp, cohort=cid, peak_id=p["peak_id"],
+                ptype="Del", cytoband=str(p.get("cytoband", "")).strip(),
+                chrom=chrom, start=int(cs), end=int(ce),
+                kb=round((float(ce) - float(cs)) / 1e3, 1), core=core,
+                gistic_freq=round(float(p["freq_altered"]), 4),
+                n_samples=nsmp, n_covered=n["covered"],
+                n_loh=n["n_loh"], n_cnloh=n["n_cnloh"],
+                del_loh=n["del_loh"], del_only=n["del_only"],
+                loh_only=n["loh_only"], neither=n["neither"],
+                loh_only_cnloh=n["loh_only_cnloh"],
+                loh_only_cnloss=n["loh_only_cnloss"],
+                loh_frac_any=round(n["n_loh"] / nsmp, 4),
+                cnloh_frac_any=round(n["n_cnloh"] / nsmp, 4),
+                loh_only_frac=round(n["loh_only"] / nsmp, 4)))
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return out.sort_values(["comparison", "cohort", "loh_only_frac"],
+                           ascending=[True, True, False]).reset_index(drop=True)
+
+
+def _cross_agg(cross: pd.DataFrame, cid: str, col: str) -> float:
+    """Cohort-level totals of the LOH x Del cross (peaks pooled), for the
+    one-line-per-comparison summary."""
+    if cross is None or getattr(cross, "empty", True):
+        return np.nan
+    d = cross[cross["cohort"] == cid]
+    n = float(d["n_samples"].sum())
+    if d.empty or n <= 0:
+        return np.nan
+    src = "loh_only" if col == "loh_only_frac" else col
+    if src not in d.columns:
+        return np.nan
+    return round(float(d[src].sum()) / n, 4)
+
+
+# ---------------------------------------------------------------------------
 # module entry
 # ---------------------------------------------------------------------------
 
@@ -700,6 +856,14 @@ _ABS_METRICS = [
     ("cnloh_frac", "copy-neutral LOH"),
     ("wgd_frac", "WGD fraction"),
 ]
+# metrics that additionally get WGD-stratified rows: WGD raises minor CN
+# genome-wide and so depresses loh_frac, and the cohort difference in WGD
+# composition can dominate (even reverse) the pooled test — see
+# docs/stats.md.  Purity/ploidy are not stratified this way: wgd_status is
+# defined from them, so within-stratum tests would be conditioned on the
+# outcome.
+_ABS_STRAT_METRICS = (("loh_frac", "LOH fraction"),
+                      ("cnloh_frac", "copy-neutral LOH"))
 _ABS_CN_METRICS = ("S_focal_cn_star", "S_arm_cn_star", "S_chrom_cn_star")
 
 
@@ -844,6 +1008,30 @@ def run_module_abs(cfg: dict[str, Any],
                 cohort_higher=(ca if np.nanmedian(ya) > np.nanmedian(yb)
                                else cb)))
 
+        # LOH within WGD strata: the pooled row above mixes a WGD+ stratum
+        # (minor CN >= 1 is common, LOH is suppressed) with a WGD- stratum,
+        # so its sign/size follows the cohorts' WGD composition
+        for metric, label in _ABS_STRAT_METRICS:
+            for sval, slab in ((1, "WGD+ only"), (0, "WGD- only")):
+                sub = pool[pool["wgd_status"] == sval]
+                sub = sub.dropna(subset=[metric])
+                ya = sub.loc[sub["cohort"] == ca, metric].to_numpy(float)
+                yb = sub.loc[sub["cohort"] == cb, metric].to_numpy(float)
+                if len(ya) < 3 or len(yb) < 3:
+                    continue
+                try:
+                    p_mw = float(stats.mannwhitneyu(
+                        ya, yb, alternative="two-sided")[1])
+                except ValueError:
+                    p_mw = np.nan
+                metric_rows.append(dict(
+                    comparison=f"{comp} [{slab}]", metric=metric,
+                    label=label, n_a=len(ya), n_b=len(yb), p_mw=p_mw,
+                    r_rb=round(_rank_biserial(ya, yb), 4),
+                    median_a=round(float(np.median(ya)), 4),
+                    median_b=round(float(np.median(yb)), 4),
+                    cohort_higher=(ca if np.nanmedian(ya) > np.nanmedian(yb)
+                                   else cb)))
 
         for metric in _ABS_CN_METRICS:
             d = pool.dropna(subset=[metric])
@@ -869,6 +1057,7 @@ def run_module_abs(cfg: dict[str, Any],
     cn_tests = pd.DataFrame(cn_rows)
 
     purity_peaks = _purity_adjusted_peaks(cfg, data, cn_tables)
+    loh_del = _loh_del_cross(cfg, data, seg_tables, cn_tables, acfg)
 
     sum_rows = []
     # metric_rows need >=3 samples per cohort (Mann-Whitney); small pilots
@@ -895,6 +1084,12 @@ def run_module_abs(cfg: dict[str, Any],
                 ploidy_p=(mp.loc[mp["metric"] == "ploidy_abs", "p_mw"].iloc[0]
                           if len(mp) else np.nan),
                 n_low_purity=len(low_purity),
+                loh_only_frac_a=_cross_agg(loh_del, ca, "loh_only_frac"),
+                loh_only_frac_b=_cross_agg(loh_del, cb, "loh_only_frac"),
+                loh_only_cnloh_frac_a=_cross_agg(loh_del, ca,
+                                                 "loh_only_cnloh"),
+                loh_only_cnloh_frac_b=_cross_agg(loh_del, cb,
+                                                 "loh_only_cnloh"),
                 germline_mode_a=_mode_of(ca, "germline_mode"),
                 germline_mode_b=_mode_of(cb, "germline_mode"),
                 het_source_a=_mode_of(ca, "het_source"),
@@ -910,6 +1105,8 @@ def run_module_abs(cfg: dict[str, Any],
                     index=False)
     purity_peaks.to_csv(out_table(cfg, "ABS_purity_adjusted_peaks.tsv"),
                         sep="\t", index=False)
+    loh_del.to_csv(out_table(cfg, "ABS_loh_del_cross.tsv"), sep="\t",
+                   index=False)
     summary.to_csv(out_table(cfg, "ABS_summary.tsv"), sep="\t", index=False)
     if out_skip.exists():
         out_skip.unlink()
@@ -925,4 +1122,4 @@ def run_module_abs(cfg: dict[str, Any],
                   "from the sensitivity rerun")
     return dict(cn_tables=cn_tables, scores=scores, wgd=wgd, metrics=metrics,
                 cn_tests=cn_tests, purity_peaks=purity_peaks,
-                summary=summary, skipped=None, acfg=acfg)
+                loh_del=loh_del, summary=summary, skipped=None, acfg=acfg)

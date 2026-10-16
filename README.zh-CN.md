@@ -149,7 +149,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P4 的 marker 层、G
 | **P10** | **负担受控逐峰置换** | union 峰 × 样本二值矩阵上**同时固定行和（每样本峰数）与列和（每峰频率）**的置换检验；对照 naive p 直接量化负担假阳性（burden_flag）；含着丝粒/端粒峰与高 segment 样本 QC |
 | **PQ** | **p 值质检** | 自动读取本次运行的 P3/P4/P5/GS/P7/P10 全部 p 值集合：Q-Q 图 + 基因组膨胀因子 λ=median(z²)/0.4549（λ>1.1 = 系统性偏倚，先解决再引用结果） |
 | **PD** | **λ 膨胀的批次/基线诊断** | 每样本基线（中性段 seg_mean 中位数）检查 + Δmedian 空间结构轨迹 + **样本内中心化敏感性**：P4 式检验在原始/中心化两套数据各跑一遍，λ 对比 + 每窗口可信度分层（robust / baseline_only / centered_only / ns） |
-| **ABS** | **绝对拷贝数扩展（可选）** | 只读服务器产出的两张表（`absolute_cn_<cid>.tsv` + `absolute_seg_<cid>.tsv`）：WGD 频率（Fisher+OR）与倍数三分类（无/1×/≥2×，严格印记判据 nMinor≥2）、纯度/绝对倍性/LOH/CN-LOH（MW+rank-biserial）、CN 空间三级负荷（P9 机制移植）、纯度校正逐峰模型、HRD 疤痕评分（scarHRD 参考实现，`R/scarHRD/`，MIT；HRD-LOH/TAI/LST/HRD-sum，含 WGD 分层解读）；ASCAT 本体在服务器用 `R/absolute_cn.R` 跑（交接与表契约：`docs/ascat_handoff.md`），表缺失即跳过 |
+| **ABS** | **绝对拷贝数扩展（可选）** | 只读服务器产出的两张表（`absolute_cn_<cid>.tsv` + `absolute_seg_<cid>.tsv`）：WGD 频率（Fisher+OR）与倍数三分类（无/1×/≥2×，严格印记判据 nMinor≥2）、纯度/绝对倍性/LOH/CN-LOH（MW+rank-biserial，**LOH 另给 WGD 分层行**——合并检验被 WGD 构成混杂）、**LOH × GISTIC-Del 交叉**（每样本×Del 峰：del+LOH / del-only / LOH-only / neither，LOH-only 再分拷贝中性 vs CN-loss）、CN 空间三级负荷（P9 机制移植）、纯度校正逐峰模型、HRD 疤痕评分（scarHRD 参考实现，`R/scarHRD/`，MIT；HRD-LOH/TAI/LST/HRD-sum，含 WGD 分层解读）；ASCAT 本体在服务器用 `R/absolute_cn.R` 跑（交接与表契约：`docs/ascat_handoff.md`），表缺失即跳过 |
 | **CF** | 混杂敏感性 | 只读 P4/P5 表 + 每队列边际分布：E-value、最小解释效应 δ*、偏差上界/去偏下界（**定界**而非校正） |
 | **GS** | 振幅差分 | 逐窗/逐 band G-score 组间差 + 置换检验（normal 或 MC） |
 

@@ -80,6 +80,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   GC 后 / ASPCF 后，内容键控）与分阶段耗时日志（`[abs][t]`）。
 
 ### Added
+- **ABS — LOH analysed against WGD composition and against GISTIC's own
+  deletion calls**, the two allele-specific questions the per-sample LOH
+  fraction cannot answer:
+  - **WGD-stratified LOH** (`<comp> [WGD+ only]` / `[WGD- only]` rows in
+    `ABS_purity_ploidy.tsv`, figure `ABS_loh_wgd_strata`): the pooled LOH
+    test mixes a WGD+ stratum (minor CN >= 1 genome-wide, so fewer LOH
+    segments survive) with a WGD- stratum, so its size — and sign — follow
+    the cohorts' WGD composition.  In the CUE/CHB tables the pooled medians
+    read CHB > CUE (0.148 vs 0.132, p = 0.63) while *both* strata read
+    CUE >= CHB (WGD+ 0.217 vs 0.205; WGD- 0.032 vs 0.002); purity pushes the
+    same way (Spearman(purity, loh_frac) = -0.55).  Read the stratified rows.
+  - **LOH x GISTIC-Del cross** (`ABS_loh_del_cross.tsv`, figure
+    `ABS_loh_del_cross`): every (sample x Del peak, q <= 0.25) pair is
+    classified del+LOH / del-only / LOH-only / neither by intersecting the
+    allele-specific segments with GISTIC's per-sample del call
+    (`loh_cross_core`: narrow Peak Limits; `loh_cross_cover`: 0.5).  Since
+    GISTIC calls deletion from *total* CN, the LOH-only class is split into
+    copy-neutral (no dosage change — structurally invisible to the del
+    track) and CN-loss (under the amplitude call); 8-9% of CUE/CHB pairs are
+    LOH-only and about half of those copy-neutral, and at small peaks the
+    LOH fraction far exceeds the del frequency (CUE 19p13.3: del call 23%
+    vs LOH 46%).  `ABS_summary.tsv` gains `loh_only_frac_{a,b}` and
+    `loh_only_cnloh_frac_{a,b}`.
+  Also fixed: `WGD_class_stacked` crashed (`chi2_contingency` zero expected
+  cell) when one cohort has no sample in a WGD class.
 - **`docs/ascat_handoff.md`** — the two-machine ASCAT contract: server run
   book (`prepare_abs_inputs.py` → `absolute_cn.R`), the frozen schema of
   `absolute_cn_<cid>.tsv` / `absolute_seg_<cid>.tsv` (required vs optional

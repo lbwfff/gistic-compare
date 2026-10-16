@@ -1,17 +1,6 @@
 # 设计文档：绝对拷贝数扩展工作流（模块 ABS + 全套统计）
 
 > 状态：**Phase 1 + 2 已实现（2026-10）**——`pairwise_absolute.py`
-> （比较统计 + table mode）与 `R/absolute_cn.R`（ASCAT 管线模式，自动
-> 降级）均已落地，合成数据端到端测试通过；Phase 3（真实数据）待数据
-> 到位后启动（§8 检查清单、§9 开放问题）。
->
-> 决策记录：工具选 **FACETS**（否决 HAPSEG+ABSOLUTE 遗留链与 ASCAT，理由 §3）；
-> 范围选**全套统计**（用户确认，§5）；语言集成选 **subprocess + Rscript**
-> （否决 rpy2，理由 §4.1）。
-
----
-
-> 状态：**Phase 1 + 2 已实现（2026-10）**——`pairwise_absolute.py`
 > （比较统计 + table mode）与 `R/absolute_cn.R`（ASCAT 运行器）均已落地，
 > 合成数据端到端测试通过；Phase 3（真实数据）已端到端验证并留档于
 > `abs_real_data_status.md`。
@@ -129,21 +118,28 @@ apt-probeset-genotype（birdseed 模型）→ `birdseed.calls.txt`（基因型
 
 ### 4.4 Python 比较统计（模块 ABS 的后半段）
 
-读入两个队列的绝对 CN 表后：
+读入两个队列的绝对 CN 表后（**实现后的实际产出**，见 `stats.md` 的模块
+ABS 一节与 `figures.md` 的图清单）：
 
 | 统计 | 方法 | 输出表 |
 |---|---|---|
-| WGD 频率差 | 2×3 Fisher（0/1/2+）+ 有序 logistic（手册 §4.4） | `ABS_wgd.tsv` |
-| purity / ploidy_abs | MW + rank-biserial + 分布图 | `ABS_purity_ploidy.tsv` |
-| LOH / CN-LOH 负担 | MW + 分布图 | 同上 |
-| 绝对 CN 三级负荷 | P9 机制在 CN 空间重算（事件阈值换算为拷贝数） | `ABS_burden.tsv` |
+| WGD 频率差 | 2×2 Fisher（WGD+ vs WGD−）+ OR/CI；`mean_status` 仅描述 | `ABS_wgd.tsv` |
+| purity / ploidy_abs | MW + rank-biserial | `ABS_purity_ploidy.tsv` |
+| LOH / CN-LOH 负担 | MW + rank-biserial，**并给 WGD 分层行**（合并检验被 WGD 构成混杂） | 同上 |
+| LOH × GISTIC-Del 交叉 | 每样本×Del 峰四类（del+LOH/del-only/LOH-only/neither），LOH-only 拆拷贝中性/CN-loss | `ABS_loh_del_cross.tsv` |
+| 绝对 CN 三级负荷 | P9 机制在 CN 空间重算（事件阈值换算为拷贝数） | `ABS_cn_scores.tsv` + `ABS_cn_tests.tsv` |
 | 纯度校正逐峰 | P3 扩展：`altered ~ cohort + purity` | `ABS_purity_adjusted_peaks.tsv` |
 | summary | 全部要点一行/比较 | `ABS_summary.tsv` |
 
 ### 4.5 图
 
-`ABS_wgd_freq`（WGD 频率条形+星号）、`ABS_purity_ploidy`（分布对比）、
-`ABS_burden_dists`（绝对 CN 负荷分布）。
+实现后为 `ABS_wgd_freq`（WGD 频率条形 + Wilson CI）、`ABS_metric_dists`
+（purity/ploidy/LOH/CN-LOH 分布）、`ABS_loh_wgd_strata`（LOH 的 WGD 分层）、
+`ABS_purity_adjusted`（crude vs 纯度校正 OR）、`ABS_loh_del_cross`
+（GISTIC del 频率 vs 同一峰的 LOH 频率 + 四类构成）、`WGD_class_stacked`
+（严格/宽松 WGD 类构成）、`ABS_ploidy_rank`（倍性 rank 图）、
+`ABS_hrd_dist_*`（scarHRD 各指标分布，由 `scripts/run_hrd_scores.py`
+产出表后再画）。清单与读法见 `figures.md`。
 
 ## 5. WGD 判定启发式（实现时必须声明 + 敏感性分析）
 

@@ -143,6 +143,11 @@ analysis:
   #   r_timeout_min_per_sample: 90     # per-worker subprocess budget
   #   cn_thr_wgd: 3.0              # WGD heuristic A total-CN threshold
   #   loh_frac_wgd: 0.30           # heuristic A genome fraction (sens 0.2-0.5)
+  #   loh_cross_core: narrow       # LOH x Del cross: peak interval used for
+  #                                # the LOH decision (narrow Peak Limits |
+  #                                # wide Peak Limits)
+  #   loh_cross_cover: 0.5         # fraction of that interval that must be
+  #                                # cn_minor==0 to call the pair LOH
   #   min_purity: 0.30             # R05 4.5 low-purity flag
   #   ploidy_wgd: 3.7              # heuristic B (classical ploidy rule)
   #   penalty: 70                  # ascat.aspcf segmentation penalty

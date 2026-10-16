@@ -147,12 +147,20 @@ GISTIC 侧的样本名一致。
 - 换版本后建议先跑一次本地 ABS，确认没有 skip（`ABS_skipped.txt` 不存在）
   再引用结果。
 
-## 6. 后续：ASCAT 结果独有的分析（在包内做，不需要本地 ASCAT）
+## 6. ASCAT 结果独有的分析（在包内做，不需要本地 ASCAT）
 
-- **GISTIC-Del × LOH 三分类**（del+LOH / del-only / LOH-only）：拷贝中性
-  LOH 在 GISTIC 的 Del track 里**完全不可见**，是绝对 CN 数据的独有信息。
-- LOH 比较按 **purity × WGD 分层**：WGD 后 minor CN 普遍 ≥ 1，
-  `loh_frac` 会系统性下降，不分层会读错。
+以下两条已在模块 ABS 内实现（表 + 图），不需要服务器上跑任何东西：
+
+- **LOH × GISTIC-Del 交叉**（`ABS_loh_del_cross.tsv`，图 `ABS_loh_del_cross`）：
+  每个 (样本 × Del 峰, q≤0.25) 分成 del+LOH / del-only / LOH-only /
+  neither，且 LOH-only 再拆成 **拷贝中性**（`cn_total==2 & cn_minor==0`，
+  无剂量变化 —— GISTIC 的 Del track 结构上看不见）与 CN-loss（有剂量丢失
+  但低于 GISTIC 的幅度调用）两类。口径：`loh_cross_core`（默认 narrow
+  Peak Limits）+ `loh_cross_cover`（默认 0.5 覆盖阈值）。
+- **WGD 分层的 LOH 比较**（`ABS_purity_ploidy.tsv` 的 `<comp> [WGD+ only]` /
+  `[WGD- only]` 行，图 `ABS_loh_wgd_strata`）：WGD 后 minor CN 普遍 ≥ 1，
+  `loh_frac` 系统性下降，合并检验的方向由两队列的 WGD 构成决定（CUE/CHB
+  实测反向）；引用 LOH 结论时读分层行，不读合并行。
 - **HRD**：`scripts/run_hrd_scores.py`（vendored `R/scarHRD/`，MIT）读同一
   批表算 HRD-LOH / TAI / LST；同样受 purity/ploidy 影响，引用时给分层。
 

@@ -122,7 +122,7 @@ and *"which signals are specific to my experiment?"*.
 | **P11** | what does the **focal landscape** look like genome-wide? (per-cohort `-log10(q)` from `scores.gistic`, Amp up / Del down, peak genes annotated; descriptive overlay, no between-cohort test) | `scores.gistic` + `amp/del_genes.conf_90.txt` |
 | **PQ** | are the p-value sets healthy? (Q-Q plots + genomic inflation λ for every scan) | saved tables of the same run |
 | **PD** | **why** is lambda inflated — and what survives baseline removal? (per-sample baseline check, shift-structure track, centering sensitivity with trust layers) | `tumors.seg` |
-| **ABS** | **absolute-copy-number extension** (optional): WGD frequency (Fisher+OR), purity/absolute-ploidy/LOH/CN-LOH (MW), P9's three-level burden in CN space, purity-adjusted per-peak logistic | `absolute_cn_<cid>.tsv` + `absolute_seg_<cid>.tsv` (ASCAT runs on a server from `R/absolute_cn.R` — `docs/ascat_handoff.md`; skips with a reason without the tables) |
+| **ABS** | **absolute-copy-number extension** (optional): WGD frequency (Fisher+OR), purity/absolute-ploidy/LOH/CN-LOH (MW; LOH also within WGD strata), LOH x GISTIC-Del class cross (del+LOH / del-only / LOH-only / neither, copy-neutral split), P9's three-level burden in CN space, purity-adjusted per-peak logistic | `absolute_cn_<cid>.tsv` + `absolute_seg_<cid>.tsv` (ASCAT runs on a server from `R/absolute_cn.R` — `docs/ascat_handoff.md`; skips with a reason without the tables) |
 | CF | how large would a confounder have to be to explain the P4/P5 findings? (bounds, not adjustment) | P4/P5 tables |
 | GS | which windows/bands differ in **amplitude** (G-score) rather than frequency? | `D.cap1.5.mat` |
 
