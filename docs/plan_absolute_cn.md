@@ -11,6 +11,22 @@
 
 ---
 
+> 状态：**Phase 1 + 2 已实现（2026-10）**——`pairwise_absolute.py`
+> （比较统计 + table mode）与 `R/absolute_cn.R`（ASCAT 运行器）均已落地，
+> 合成数据端到端测试通过；Phase 3（真实数据）已端到端验证并留档于
+> `abs_real_data_status.md`。
+>
+> **部署（2026-10 起）**：ASCAT 执行在**服务器**（`R/absolute_cn.R` +
+> `scripts/prepare_abs_inputs.py`，PC 上跑 226 样本需 1h31m 且受内存约束），
+> 跨机器只传两张表；本包默认只做下游（`auto_run: false`）。
+> **接口契约（表 schema / 运行手册 / 变更控制）见 `ascat_handoff.md`。**
+>
+> 决策记录：工具选 **FACETS**（否决 HAPSEG+ABSOLUTE 遗留链与 ASCAT，理由 §3）；
+> 范围选**全套统计**（用户确认，§5）；语言集成选 **subprocess + Rscript**
+> （否决 rpy2，理由 §4.1）。
+
+---
+
 ## 1. 目标
 
 在现有"GISTIC 输出比较"工作流之外，增加一条可选的**绝对拷贝数扩展**：

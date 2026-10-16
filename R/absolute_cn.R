@@ -2,6 +2,10 @@
 # absolute_cn.R — ASCAT-based absolute copy-number pipeline (module ABS,
 # Phase 2 wrapper; see docs/plan_absolute_cn.md §4.3).
 #
+# Runs on the SERVER (the analysis machine only consumes the two tables it
+# writes): run book, frozen table schema and change control live in
+# docs/ascat_handoff.md.
+#
 # Reads a manifest (sample, cohort, logr, baf [, germline_logr,
 # germline_baf] [, het_calls]) whose paths are relative to the manifest
 # directory, runs ASCAT 3.x on every sample of one cohort, applies the

@@ -80,9 +80,12 @@ Each cohort folder must contain the GISTIC files named `<prefix>.<suffix>`:
 | `<prefix>.amp_qv.conf_90.txt` / `.del_qv.conf_90.txt` | P6 (optional, display-only) |
 
 Module **ABS** is the one optional extension that needs data *beyond* GISTIC
-outputs: marker-level tumour logR/BAF (SNP6 Birdseed chain) plus R with the
-ASCAT package.  Without them it skips with a reason — every other module runs
-on the tables above.
+outputs: the two harmonized absolute-CN tables per cohort.  ASCAT itself runs
+**outside** this package — normally on a server — from this repository's
+`R/absolute_cn.R` (marker-level logR/BAF in, `absolute_cn_<cid>.tsv` +
+`absolute_seg_<cid>.tsv` out).  Run book and frozen table schema:
+`docs/ascat_handoff.md`.  Without the tables ABS skips with a reason; every
+other module runs on the tables above.
 
 ## The two workflows
 
@@ -119,7 +122,7 @@ and *"which signals are specific to my experiment?"*.
 | **P11** | what does the **focal landscape** look like genome-wide? (per-cohort `-log10(q)` from `scores.gistic`, Amp up / Del down, peak genes annotated; descriptive overlay, no between-cohort test) | `scores.gistic` + `amp/del_genes.conf_90.txt` |
 | **PQ** | are the p-value sets healthy? (Q-Q plots + genomic inflation λ for every scan) | saved tables of the same run |
 | **PD** | **why** is lambda inflated — and what survives baseline removal? (per-sample baseline check, shift-structure track, centering sensitivity with trust layers) | `tumors.seg` |
-| **ABS** | **absolute-copy-number extension** (optional): WGD frequency (Fisher+OR), purity/absolute-ploidy/LOH/CN-LOH (MW), P9's three-level burden in CN space, purity-adjusted per-peak logistic | ASCAT on marker-level logR/BAF (`R/absolute_cn.R`, needs raw data — auto-skips without it) |
+| **ABS** | **absolute-copy-number extension** (optional): WGD frequency (Fisher+OR), purity/absolute-ploidy/LOH/CN-LOH (MW), P9's three-level burden in CN space, purity-adjusted per-peak logistic | `absolute_cn_<cid>.tsv` + `absolute_seg_<cid>.tsv` (ASCAT runs on a server from `R/absolute_cn.R` — `docs/ascat_handoff.md`; skips with a reason without the tables) |
 | CF | how large would a confounder have to be to explain the P4/P5 findings? (bounds, not adjustment) | P4/P5 tables |
 | GS | which windows/bands differ in **amplitude** (G-score) rather than frequency? | `D.cap1.5.mat` |
 
@@ -210,7 +213,7 @@ cd gistic-compare
 pip install -e ".[dev]"
 pytest          # 100+ tests: parsing/config/intervals/stats + end-to-end runs
                 # on synthetic GISTIC data + per-module tests; the ABS
-                # R/ASCAT pipeline tests skip cleanly without Rscript+ASCAT
+                # R/ASCAT pipeline tests (auto_run) skip without Rscript+ASCAT
 ruff check src tests
 ```
 
@@ -234,8 +237,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - P10 controls the **global burden** confounder only; it is not a batch
   correction. PQ/PD exist to surface (and, for baselines, remove) exactly
   that class of artifact — run them before quoting scan results.
-- An optional absolute-copy-number extension (WGD/purity/ploidy via
-  FACETS, R-backed) is planned — design in `docs/plan_absolute_cn.md`.
+- An optional absolute-copy-number extension (WGD/purity/ploidy/LOH via
+  ASCAT, R-backed) is implemented; ASCAT runs on a server and only its two
+  harmonized tables enter this package — see `docs/ascat_handoff.md` and
+  `docs/plan_absolute_cn.md`.
 - CF bounds confounding from marginal distributions only — it cannot adjust
   for confounders without sample-level metadata (that is P3).
 - `results/` and any patient-level data should never be committed to this

@@ -1,5 +1,5 @@
 """Tests for module ABS (absolute copy-number comparisons; table mode +
-Phase 2 R/ASCAT pipeline mode)."""
+opt-in R/ASCAT pipeline mode)."""
 
 from __future__ import annotations
 
@@ -49,7 +49,8 @@ def test_abs_end_to_end(pairwise_config, tmp_path):
 
     cfg = yaml.safe_load(open(pairwise_config))
     cfg.setdefault("analysis", {})["absolute_cn"] = {
-        "tool": "ascat", "min_purity": 0.30, "loh_frac_wgd": 0.30}
+        "tool": "ascat", "auto_run": True,
+        "min_purity": 0.30, "loh_frac_wgd": 0.30}
     path = pairwise_config.parent / "config_abs.yaml"
     path.write_text(yaml.safe_dump(cfg))
 
@@ -90,7 +91,69 @@ def test_abs_skip_without_tables(pairwise_config, tmp_path):
     out = tmp_path / "out_abs_skip"
     assert main(["--config", str(pairwise_config), "--modules", "ABS",
                  "--outdir", str(out), "--skip-figures"]) == 0
-    assert (out / "test_pair" / "tables" / "ABS_skipped.txt").exists()
+    note = out / "test_pair" / "tables" / "ABS_skipped.txt"
+    assert note.exists()
+    # auto_run defaults to false: the skip must point at the server-side
+    # handoff instead of shelling out to R (Rscript/ASCAT are installed in
+    # this environment, so only the default gate keeps it from running)
+    text = note.read_text()
+    assert "ascat_handoff" in text and "auto_run" in text
+
+
+def test_abs_schema_mismatch_skips(pairwise_config, tmp_path):
+    """A table missing a frozen column skips ABS with a pointer, it does
+    not compute on mislabelled data."""
+    import yaml
+    synth_root = pairwise_config.parent
+    synth_absolute_tables(synth_root / "A", "a", seed=61, n_samples=8,
+                          sample_names=[f"A{i}" for i in range(1, 9)])
+    synth_absolute_tables(synth_root / "B", "b", seed=62, n_samples=8,
+                          sample_names=[f"B{i}" for i in range(1, 9)])
+    bad = pd.read_csv(synth_root / "A" / "absolute_cn_a.tsv", sep="\t")
+    bad.drop(columns=["loh_frac"]).to_csv(
+        synth_root / "A" / "absolute_cn_a.tsv", sep="\t", index=False)
+
+    cfg = yaml.safe_load(open(pairwise_config))
+    cfg.setdefault("analysis", {})["absolute_cn"] = {"tool": "ascat"}
+    path = pairwise_config.parent / "config_abs_bad.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+
+    from gistic_compare.cli import main
+    out = tmp_path / "out_abs_bad"
+    assert main(["--config", str(path), "--modules", "ABS",
+                 "--outdir", str(out), "--skip-figures"]) == 0
+    note = out / "test_pair" / "tables" / "ABS_skipped.txt"
+    assert "loh_frac" in note.read_text()
+
+
+def test_abs_numeric_chrom_labels(pairwise_config, tmp_path):
+    """'1' (server-side tools often emit plain numbers) is normalised to
+    'chr1' so the cytoband/arm lookups keep matching."""
+    import yaml
+    synth_root = pairwise_config.parent
+    synth_absolute_tables(synth_root / "A", "a", seed=71, n_samples=8,
+                          sample_names=[f"A{i}" for i in range(1, 9)])
+    synth_absolute_tables(synth_root / "B", "b", seed=72, n_samples=8,
+                          sample_names=[f"B{i}" for i in range(1, 9)])
+    for cid in ("a", "b"):
+        p = synth_root / cid.upper() / f"absolute_seg_{cid}.tsv"
+        seg = pd.read_csv(p, sep="\t")
+        seg["chrom"] = seg["chrom"].str.replace("chr", "", regex=False)
+        seg.to_csv(p, sep="\t", index=False)
+
+    cfg = yaml.safe_load(open(pairwise_config))
+    cfg.setdefault("analysis", {})["absolute_cn"] = {"tool": "ascat"}
+    path = pairwise_config.parent / "config_abs_numchrom.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+
+    from gistic_compare.cli import main
+    out = tmp_path / "out_abs_numchrom"
+    assert main(["--config", str(path), "--modules", "ABS",
+                 "--outdir", str(out), "--skip-figures"]) == 0
+    tables = out / "test_pair" / "tables"
+    assert not (tables / "ABS_skipped.txt").exists()
+    wgd = pd.read_csv(tables / "ABS_wgd.tsv", sep="\t")
+    assert len(wgd) >= 1
 
 
 def test_abs_low_purity_sensitivity(pairwise_config, tmp_path):
@@ -158,7 +221,8 @@ def test_abs_r_pipeline_end_to_end(pairwise_config, tmp_path):
 
     cfg = yaml.safe_load(open(pairwise_config))
     cfg.setdefault("analysis", {})["absolute_cn"] = {
-        "tool": "ascat", "raw_dir": "raw_snp6", "manifest": "manifest.tsv"}
+        "tool": "ascat", "auto_run": True, "raw_dir": "raw_snp6",
+        "manifest": "manifest.tsv"}
     path = pairwise_config.parent / "config_abs_r.yaml"
     path.write_text(yaml.safe_dump(cfg))
 
@@ -218,7 +282,7 @@ def test_abs_r_pipeline_tumor_only_het_calls(pairwise_config, tmp_path):
 
     cfg = yaml.safe_load(open(pairwise_config))
     cfg.setdefault("analysis", {})["absolute_cn"] = {
-        "tool": "ascat", "raw_dir": "raw_snp6",
+        "tool": "ascat", "auto_run": True, "raw_dir": "raw_snp6",
         "manifest": "manifest_tonly.tsv"}
     path = pairwise_config.parent / "config_abs_tonly.yaml"
     path.write_text(yaml.safe_dump(cfg))
@@ -271,7 +335,7 @@ def test_abs_r_pipeline_inferred_fallback(pairwise_config, tmp_path):
     manifest.to_csv(raw / "manifest_inf.tsv", sep="\t", index=False)
     cfg = yaml.safe_load(open(pairwise_config))
     cfg.setdefault("analysis", {})["absolute_cn"] = {
-        "tool": "ascat", "raw_dir": "raw_snp6",
+        "tool": "ascat", "auto_run": True, "raw_dir": "raw_snp6",
         "manifest": "manifest_inf.tsv"}
     path = pairwise_config.parent / "config_abs_inf.yaml"
     path.write_text(yaml.safe_dump(cfg))

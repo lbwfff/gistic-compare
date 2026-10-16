@@ -35,6 +35,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   metrics 表崩溃（KeyError: comparison）——加守卫跳过。
 
 ### Changed
+- **ABS: ASCAT moved to the server — the package is downstream-only by
+  default.**  Running ASCAT is this repository's `R/absolute_cn.R` (+
+  `scripts/prepare_abs_inputs.py`) but on a server, not on the analysis
+  machine (226 samples = 1h31m under memory constraints).  New
+  `analysis.absolute_cn.auto_run` (**default `false`**) gates the in-process
+  R/ASCAT subprocess: with the two harmonized tables present nothing
+  changes, and without them ABS now writes `ABS_skipped.txt` with
+  instructions instead of shelling out to Rscript.  Set `auto_run: true` to
+  restore the one-shot pipeline mode.  The two tables are now validated
+  against the frozen schema on read (`_CN_REQUIRED` / `_SEG_REQUIRED`,
+  `chrom` normalised so `1`/`1.0`/`chr1` all match): a missing column or a
+  chromosome outside the configured genome skips ABS with a pointer instead
+  of computing on mislabelled data.  Run book + schema + change control:
+  **`docs/ascat_handoff.md`** (new).
 - **Modules P4/P2 merged with their duplicated counterparts** — 23 module IDs
   → 21 (two fewer to run and read):
   - **P5 is no longer a module**: it became a *layer of P4*
@@ -66,6 +80,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   GC 后 / ASPCF 后，内容键控）与分阶段耗时日志（`[abs][t]`）。
 
 ### Added
+- **`docs/ascat_handoff.md`** — the two-machine ASCAT contract: server run
+  book (`prepare_abs_inputs.py` → `absolute_cn.R`), the frozen schema of
+  `absolute_cn_<cid>.tsv` / `absolute_seg_<cid>.tsv` (required vs optional
+  columns, units, chromosome naming), the local validation, the LOH/WGD
+  interpretation caveats (tumour-only `loh_frac` is a lower bound) and
+  change control (proposed `absolute_meta.json` provenance sidecar).
+  `R/ascat_opt/` stays: it is the runner's own auto-loaded, bit-identical
+  fast stack, so it is still used server-side.
 - **ABS — HRD genomic-scar scores via vendored scarHRD** (MIT reference
   implementation, `R/scarHRD/`): per-sample HRD-LOH / TAI / LST /
   HRD-sum / ploidy-adjusted score in `ABS_hrd_scores.tsv`

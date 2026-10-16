@@ -250,9 +250,12 @@ lambda = median(z^2)/0.4549 (z = Phi^-1(1 - p/2)) and a Q-Q plot.
 ## Module ABS — absolute copy-number comparisons (optional extension)
 
 Runs on ASCAT output (`R/absolute_cn.R` over marker-level logR/BAF from
-the SNP6 Birdseed chain; plan `docs/plan_absolute_cn.md`).  All
-comparisons are unpaired between-cohort tests on per-sample absolute-CN
-summaries.
+the SNP6 Birdseed chain; plan `docs/plan_absolute_cn.md`).  ASCAT itself is
+run **outside** the package, normally on a server — the two harmonized
+tables (`absolute_cn_<cid>.tsv` / `absolute_seg_<cid>.tsv`) are the whole
+input, validated against the frozen schema on read; see
+`docs/ascat_handoff.md`.  All comparisons are unpaired between-cohort tests
+on per-sample absolute-CN summaries.
 
 - **WGD frequency**: 2x2 Fisher (WGD+ vs WGD-) with odds ratio + CI.
   `wgd_status` is **binary by construction** — a single ASCAT snapshot

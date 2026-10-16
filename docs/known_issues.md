@@ -227,9 +227,11 @@ key 下贡献多行，`n_samples = len(y)` 把行数当样本数，独立性假�
 两列或配对差值）；P6/P7/GS 明确配对或标注保守性（同对内正相关使非配对检验偏保守，
 不会虚报显著但功效降低）；补齐配对路径测试。
 
-### [x] E2. 绝对拷贝数扩展（已实现，Phase 1+2）
+### [x] E2. 绝对拷贝数扩展（已实现，Phase 1+2+3）
 WGD/purity/ploidy——**ASCAT 3.x，R 后端**（`R/absolute_cn.R`；原定 FACETS
 经源码核对不支持 SNP6 阵列输入，已切换，决策记录见
 `docs/plan_absolute_cn.md` §3）。比较统计/table 模式 + 管线模式均已落地，
-合成数据端到端通过；**待 Phase 3**：真实数据（CEL/Birdseed 下载、manifest
-整理、`loh_frac_wgd` 敏感性定标）。
+合成数据端到端通过；真实数据 226/226 拟合，留档 `docs/abs_real_data_status.md`。
+**2026-10 部署调整**：ASCAT 执行移到服务器（PC 上 226 样本 1h31m 且受内存
+约束），本包默认只读两张表（`analysis.absolute_cn.auto_run: false`），
+跨机器契约见 `docs/ascat_handoff.md`。

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Split cohort-wide SNP6 Birdseed outputs into per-sample ABS inputs.
 
+Server-side step of the ASCAT handoff (run book + table schema:
+``docs/ascat_handoff.md``).  Its manifest + per-sample files feed
+``R/absolute_cn.R``; nothing here is needed for the local downstream
+analysis.
+
 Inputs (per cohort, as produced by the apt-probeset-genotype / TCGA-style
 chain from raw CEL files):
 

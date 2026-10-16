@@ -38,16 +38,27 @@ Low-purity QC: samples flagged ``flag_low_purity`` (purity <
 ``min_purity``, default 0.30 — R05 §4.5) are excluded from a sensitivity
 rerun of the headline WGD test; the delta is recorded.
 
-Pipeline mode: if tables are missing but ``analysis.absolute_cn``
-``raw_dir/manifest`` exists and Rscript + the ASCAT package are
-available, the R wrapper runs first (subprocess, logged to
-``ABS_r_pipeline.log``); its output feeds the same table mode.  Germline
-modes (recorded in the output columns ``germline_mode``/``het_source``):
-matched (measured germline BAF), or tumour-only via the samples' own
-Birdseed genotype calls (``het_calls`` manifest column) or ASCAT's
-built-in inference — tumour-only makes ``loh_frac``/``cnloh_frac``
-lower-bound estimates (somatic-LOH loci drop out of the het set).  Without
-R/ASCAT a missing table produces ``ABS_skipped.txt``.
+ASCAT itself is **not** part of this package's downstream analysis: it is
+run on a server from this repository's ``R/absolute_cn.R`` (input prep:
+``scripts/prepare_abs_inputs.py``), and only its two harmonized tables
+cross the machine boundary.  The run book and the frozen table schema are
+in ``docs/ascat_handoff.md``; the tables are validated against that schema
+on read (a mismatch skips ABS with a pointer to the document instead of
+silently computing on mislabelled columns).
+
+Pipeline mode (opt-in, server-side convenience): with
+``analysis.absolute_cn.auto_run: true`` and the tables missing, the R
+wrapper is invoked here (subprocess, logged to ``ABS_r_pipeline.log``)
+when ``raw_dir/manifest`` exists and Rscript + the ASCAT package are
+available.  **Default false** — a missing table otherwise produces
+``ABS_skipped.txt`` with instructions.
+
+Germline modes (recorded in the output columns
+``germline_mode``/``het_source``): matched (measured germline BAF), or
+tumour-only via the samples' own Birdseed genotype calls (``het_calls``
+manifest column) or ASCAT's built-in inference — tumour-only makes
+``loh_frac``/``cnloh_frac`` lower-bound estimates (somatic-LOH loci drop
+out of the het set).
 
 Outputs: ABS_wgd.tsv, ABS_purity_ploidy.tsv, ABS_cn_scores.tsv,
          ABS_cn_tests.tsv, ABS_purity_adjusted_peaks.tsv, ABS_summary.tsv
@@ -72,11 +83,28 @@ from .pairwise_regional import _regional_cfg
 _DEFAULT_R_SCRIPT = (Path(__file__).resolve().parents[2] / "R"
                      / "absolute_cn.R")
 
+# the frozen schema of the two harmonized tables (docs/ascat_handoff.md);
+# required = what the statistics below actually read, optional = metadata
+# the runner also emits (recorded in ABS_summary when present)
+_CN_REQUIRED = ("sample", "purity", "ploidy_abs", "wgd_status", "wgd_frac",
+                "loh_frac", "cnloh_frac", "flag_low_purity")
+_SEG_REQUIRED = ("sample", "chrom", "start", "end", "cn_total", "cn_major",
+                 "cn_minor")
+_CN_OPTIONAL = ("fit_ok", "note", "germline_mode", "het_source",
+                "n_segments_allelic", "wgd_flag_b", "wgd_disagreement",
+                "non_aberrant")
+_SCHEMA_DOC = "docs/ascat_handoff.md"
+
+
+class TableSchemaError(RuntimeError):
+    """Harmonized absolute tables do not match the frozen schema."""
+
 
 def _abs_cfg(cfg: dict[str, Any], rcfg: dict) -> dict:
     a = (cfg.get("analysis") or {}).get("absolute_cn") or {}
     return dict(
         tool=str(a.get("tool", "ascat")),
+        auto_run=bool(a.get("auto_run", False)),
         tables_dir=(a.get("tables_dir") or None),
         raw_dir=str(a.get("raw_dir", "raw_snp6")),
         manifest=str(a.get("manifest", "absolute_manifest.tsv")),
@@ -110,10 +138,62 @@ def _abs_cfg(cfg: dict[str, Any], rcfg: dict) -> dict:
 # table-mode input
 # ---------------------------------------------------------------------------
 
+def _norm_chrom(series: pd.Series) -> pd.Series:
+    """'1' / '1.0' / 'chr1' -> 'chr1' (the package's chromosome naming)."""
+    s = series.astype(str).str.strip()
+    plain = s.str.fullmatch(r"\d+(\.0+)?")
+    return s.mask(plain, "chr" + s.str.split(".").str[0])
+
+
+def _schema_check(df: pd.DataFrame, required: tuple[str, ...],
+                  path: Path, what: str) -> None:
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise TableSchemaError(
+            f"{what} table {path.name} is missing required column(s) "
+            f"{', '.join(missing)} — the schema is frozen; ask the ASCAT run "
+            f"for {', '.join(required)} (see {_SCHEMA_DOC})")
+    bad_chrom = sorted(set(df["chrom"].dropna().unique()) - set(CHROMS)) \
+        if "chrom" in df.columns else []
+    if bad_chrom:                       # '_norm_chrom' ran first, so this is
+        raise TableSchemaError(        # a genome/naming mismatch, not 'chrN'
+            f"{what} table {path.name} has chromosome label(s) "
+            f"{', '.join(map(str, bad_chrom[:5]))} outside the configured "
+            f"genome ({CHROMS[0]}..{CHROMS[-1]}) — check the build and the "
+            f"naming convention in {_SCHEMA_DOC}")
+
+
+def _read_abs_table(path: Path, required: tuple[str, ...],
+                    what: str) -> pd.DataFrame:
+    df = pd.read_csv(path, sep="\t")
+    if df.empty:
+        raise TableSchemaError(f"{what} table {path} is empty")
+    for col in ("sample", "chrom"):
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    if "chrom" in df.columns:
+        df["chrom"] = _norm_chrom(df["chrom"])
+    _schema_check(df, required, path, what)
+    for col in required:
+        if col in ("sample", "chrom", "note"):
+            continue
+        num = pd.to_numeric(df[col], errors="coerce")
+        if num.isna().all():
+            raise TableSchemaError(
+                f"{what} table {path.name}: column '{col}' is not numeric "
+                f"— see {_SCHEMA_DOC}")
+        df[col] = num
+    return df
+
+
 def _load_abs_tables(cfg: dict[str, Any], data: dict[str, dict],
                      acfg: dict) -> tuple[dict, dict, list[str]]:
     """Per-cohort absolute tables.  Default location: the cohort directory
-    (next to the GISTIC outputs); ``absolute_cn.tables_dir`` overrides."""
+    (next to the GISTIC outputs); ``absolute_cn.tables_dir`` overrides.
+
+    Both tables are validated against the frozen schema (see the module
+    docstring); a missing table is reported in ``missing``, a malformed one
+    raises :class:`TableSchemaError`."""
     tables_dir = (Path(acfg["tables_dir"]).expanduser()
                   if acfg["tables_dir"] else None)
     cn, seg, missing = {}, {}, []
@@ -122,8 +202,12 @@ def _load_abs_tables(cfg: dict[str, Any], data: dict[str, dict],
         p_cn = base / f"absolute_cn_{cid}.tsv"
         p_seg = base / f"absolute_seg_{cid}.tsv"
         if p_cn.exists() and p_seg.exists():
-            cn[cid] = pd.read_csv(p_cn, sep="\t")
-            seg[cid] = pd.read_csv(p_seg, sep="\t")
+            cn[cid] = _read_abs_table(p_cn, _CN_REQUIRED, "absolute CN")
+            seg[cid] = _read_abs_table(p_seg, _SEG_REQUIRED, "allelic segment")
+            absent = [c for c in _CN_OPTIONAL if c not in cn[cid].columns]
+            if absent:
+                print(f"  [ABS] note: {cid} absolute CN table lacks "
+                      f"optional column(s) {', '.join(absent)}")
         else:
             missing.append(cid)
     return cn, seg, missing
@@ -215,8 +299,10 @@ def _r_pkg_available(rscript: str, pkg: str) -> bool:
 
 def _run_r_pipeline(cfg: dict[str, Any], acfg: dict,
                     missing: list[str]) -> tuple[bool, str]:
-    """Run the R/FACETS wrapper (R/absolute_cn.R) for cohorts whose
-    harmonized tables are missing.  Returns (ok, message)."""
+    """Run the ASCAT wrapper (``R/absolute_cn.R``) for cohorts whose
+    harmonized tables are missing — opt-in via ``auto_run`` (see
+    ``docs/ascat_handoff.md``); in normal operation the tables come from
+    the server-side run.  Returns (ok, message)."""
     rscript = _rscript()
     if rscript is None:
         return False, ("Rscript not on PATH — install R or place harmonized "
@@ -677,16 +763,28 @@ def run_module_abs(cfg: dict[str, Any],
                     "implemented (a FACETS count-based path is reserved "
                     "for future sequencing input, not implemented)")
 
-    cn_tables, seg_tables, missing = _load_abs_tables(cfg, data, acfg)
-    if missing:
-        ok, msg = _run_r_pipeline(cfg, acfg, missing)
-        if not ok:
-            return skip(msg)
-        print(f"  [ABS] R/ASCAT pipeline: {msg}")
+    cn_tables, seg_tables, missing = {}, {}, []
+    try:
         cn_tables, seg_tables, missing = _load_abs_tables(cfg, data, acfg)
-        if missing:
-            return skip("pipeline ran but tables still missing for "
-                        + ", ".join(missing))
+        if missing and acfg["auto_run"]:
+            ok, msg = _run_r_pipeline(cfg, acfg, missing)
+            if not ok:
+                return skip(msg)
+            print(f"  [ABS] R/ASCAT pipeline: {msg}")
+            cn_tables, seg_tables, missing = _load_abs_tables(cfg, data, acfg)
+            if missing:
+                return skip("pipeline ran but tables still missing for "
+                            + ", ".join(missing))
+    except TableSchemaError as e:
+        return skip(str(e))
+    if missing:
+        return skip(
+            f"no absolute tables for {', '.join(missing)} — ASCAT runs on "
+            "the server (R/absolute_cn.R, see docs/ascat_handoff.md); place "
+            "absolute_cn_<cid>.tsv + absolute_seg_<cid>.tsv next to each "
+            "cohort's GISTIC outputs (or set analysis.absolute_cn."
+            "tables_dir), or set analysis.absolute_cn.auto_run: true to run "
+            "the R wrapper here")
 
     bands, _ = _load_bands(cfg, rcfg, data)
     if bands.empty:
@@ -745,6 +843,7 @@ def run_module_abs(cfg: dict[str, Any],
                 median_b=round(float(np.median(yb)), 4),
                 cohort_higher=(ca if np.nanmedian(ya) > np.nanmedian(yb)
                                else cb)))
+
 
         for metric in _ABS_CN_METRICS:
             d = pool.dropna(subset=[metric])

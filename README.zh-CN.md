@@ -5,7 +5,7 @@
 | workflow | 模块 | 拓扑 | 用途 |
 |---|---|---|---|
 | **benchmark**（默认） | A–G | 星型：各实验 vs 对照 | 评估实验表现、相对对照的特有信号 |
-| **pairwise** | P1–P4、P6–P11, PQ, PD, CF, GS, ABS | 两两实验比较（无对照） | P1–P3 检出/一致性（基于 GISTIC 峰/调用），P4 区域级组间差异（CBS 分段 + GISTIC marker 矩阵两层），P6 臂级 broad 景观，P7 altered 内部幅度，P8 多变量整体可分性，P9 三级负荷+wGII，P10 负担受控逐峰置换，P11 焦点 q 值全景图，PQ p 值质检，PD 批次/基线诊断，CF 混杂敏感性，GS 振幅差分，ABS 绝对拷贝数扩展（ASCAT，需原始数据，缺失自动跳过） |
+| **pairwise** | P1–P4、P6–P11, PQ, PD, CF, GS, ABS | 两两实验比较（无对照） | P1–P3 检出/一致性（基于 GISTIC 峰/调用），P4 区域级组间差异（CBS 分段 + GISTIC marker 矩阵两层），P6 臂级 broad 景观，P7 altered 内部幅度，P8 多变量整体可分性，P9 三级负荷+wGII，P10 负担受控逐峰置换，P11 焦点 q 值全景图，PQ p 值质检，PD 批次/基线诊断，CF 混杂敏感性，GS 振幅差分，ABS 绝对拷贝数扩展（只读服务器 ASCAT 产出的两张表，缺失自动跳过；`docs/ascat_handoff.md`） |
 
 ## 安装
 
@@ -149,7 +149,7 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P4 的 marker 层、G
 | **P10** | **负担受控逐峰置换** | union 峰 × 样本二值矩阵上**同时固定行和（每样本峰数）与列和（每峰频率）**的置换检验；对照 naive p 直接量化负担假阳性（burden_flag）；含着丝粒/端粒峰与高 segment 样本 QC |
 | **PQ** | **p 值质检** | 自动读取本次运行的 P3/P4/P5/GS/P7/P10 全部 p 值集合：Q-Q 图 + 基因组膨胀因子 λ=median(z²)/0.4549（λ>1.1 = 系统性偏倚，先解决再引用结果） |
 | **PD** | **λ 膨胀的批次/基线诊断** | 每样本基线（中性段 seg_mean 中位数）检查 + Δmedian 空间结构轨迹 + **样本内中心化敏感性**：P4 式检验在原始/中心化两套数据各跑一遍，λ 对比 + 每窗口可信度分层（robust / baseline_only / centered_only / ns） |
-| **ABS** | **绝对拷贝数扩展（可选）** | ASCAT（SNP6 logR/BAF，R 包装 `R/absolute_cn.R`）：WGD 频率（Fisher+OR）与倍数三分类（无/1×/≥2×，严格印记判据 nMinor≥2）、纯度/绝对倍性/LOH/CN-LOH（MW+rank-biserial）、CN 空间三级负荷（P9 机制移植）、纯度校正逐峰模型、HRD 疤痕评分（scarHRD 参考实现，`R/scarHRD/`，MIT；HRD-LOH/TAI/LST/HRD-sum，含 WGD 分层解读）；无原始数据自动跳过 |
+| **ABS** | **绝对拷贝数扩展（可选）** | 只读服务器产出的两张表（`absolute_cn_<cid>.tsv` + `absolute_seg_<cid>.tsv`）：WGD 频率（Fisher+OR）与倍数三分类（无/1×/≥2×，严格印记判据 nMinor≥2）、纯度/绝对倍性/LOH/CN-LOH（MW+rank-biserial）、CN 空间三级负荷（P9 机制移植）、纯度校正逐峰模型、HRD 疤痕评分（scarHRD 参考实现，`R/scarHRD/`，MIT；HRD-LOH/TAI/LST/HRD-sum，含 WGD 分层解读）；ASCAT 本体在服务器用 `R/absolute_cn.R` 跑（交接与表契约：`docs/ascat_handoff.md`），表缺失即跳过 |
 | **CF** | 混杂敏感性 | 只读 P4/P5 表 + 每队列边际分布：E-value、最小解释效应 δ*、偏差上界/去偏下界（**定界**而非校正） |
 | **GS** | 振幅差分 | 逐窗/逐 band G-score 组间差 + 置换检验（normal 或 MC） |
 
@@ -181,13 +181,13 @@ config 里也可指向 GISTIC `.mat` 或同列名的 TSV。P4 的 marker 层、G
 - P10：`permtest.cn_thr: 0.25`、`n_perm: 10000`、`stat: zprop|wald`、`max_segments: 2000`
 - PQ：无需配置（自动发现本次运行的 p 值集合）
 - PD：`diag.neutral_band: 0.25`、`smooth_windows: 20`
-- ABS：`absolute_cn.tool: ascat`、`raw_dir: raw_snp6/`、`manifest: absolute_manifest.tsv`（列：sample, cohort, logr, baf [, germline_logr, germline_baf | het_calls]；路径相对 manifest；het_calls = 样本自己的 Birdseed 基因型 AA/AB/BB，无 matched normal 时的 tumor-only het 代理）、`gc_file: ref/GC_AffySNP6_102015.txt.gz`（**SNP6 必需**——ASCAT GC 校正参考文件，Zenodo 14008443；无校正时网格搜索达不到 GoF 阈值，pilot 已验证）、`max_ploidy: 8`（WGD 队列需上调，默认 5.5 会拒收）、`cn_thr_wgd: 3.0`、`loh_frac_wgd: 0.30`（敏感性 0.2–0.5）、`min_purity: 0.30`、`ploidy_wgd: 3.7`、`penalty: 70`、`gamma: 0.55`（SNP array 官方默认，勿改 1——那是测序数据的值）、`cache_dir`（两级 RDS 缓存：GC 后/ASPCF 后，参数实验降到秒级）、`jobs: 4`（分块 worker 并行）、`ncores: 4`（aspcf/runAscat 样本级 mclapply）、`r_timeout_min_per_sample: 30`；管线内置官方 SNP6 预处理（CN/SNP 探针分类 logR 中心化、BAF=2→NA）与 het 掩码按键映射（探针名/坐标，免疫 loadData 重排序）；表缺失但 R+ASCAT 可用时自动走管线模式（Rscript R/absolute_cn.R），否则跳过。修复与实测记录见 `docs/abs_real_data_status.md`
+- ABS：`absolute_cn.tool: ascat`、`raw_dir: raw_snp6/`、`manifest: absolute_manifest.tsv`（列：sample, cohort, logr, baf [, germline_logr, germline_baf | het_calls]；路径相对 manifest；het_calls = 样本自己的 Birdseed 基因型 AA/AB/BB，无 matched normal 时的 tumor-only het 代理）、`gc_file: ref/GC_AffySNP6_102015.txt.gz`（**SNP6 必需**——ASCAT GC 校正参考文件，Zenodo 14008443；无校正时网格搜索达不到 GoF 阈值，pilot 已验证）、`max_ploidy: 8`（WGD 队列需上调，默认 5.5 会拒收）、`cn_thr_wgd: 3.0`、`loh_frac_wgd: 0.30`（敏感性 0.2–0.5）、`min_purity: 0.30`、`ploidy_wgd: 3.7`、`penalty: 70`、`gamma: 0.55`（SNP array 官方默认，勿改 1——那是测序数据的值）、`cache_dir`（两级 RDS 缓存：GC 后/ASPCF 后，参数实验降到秒级）、`jobs: 4`（分块 worker 并行）、`ncores: 4`（aspcf/runAscat 样本级 mclapply）、`r_timeout_min_per_sample: 30`、**`auto_run: false`（默认）**；管线内置官方 SNP6 预处理（CN/SNP 探针分类 logR 中心化、BAF=2→NA）与 het 掩码按键映射（探针名/坐标，免疫 loadData 重排序）。**ASCAT 执行已移到服务器**（`R/absolute_cn.R` + `scripts/prepare_abs_inputs.py`；运行手册与冻结的表 schema 见 `docs/ascat_handoff.md`）：本地默认只读表，缺表 → `ABS_skipped.txt` + 指引；需要在本机跑 R 包装时显式设 `auto_run: true`。表读入时按 schema 校验（必需列 + chrom 归一，不通过即跳过并指出缺列）。修复与实测记录见 `docs/abs_real_data_status.md`
 
 ## 测试
 
 ```bash
 pytest        # 100+ 个测试：解析/配置/区间/统计 + 两条 workflow 端到端（合成数据）+ 各模块单测；
-              # ABS 的 R/ASCAT 管线测试在无 Rscript/ASCAT 时自动跳过
+              # ABS 的 R/ASCAT 管线测试（auto_run）在无 Rscript/ASCAT 时自动跳过
 ruff check src tests
 ```
 

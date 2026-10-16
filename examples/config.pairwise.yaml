@@ -119,9 +119,17 @@ analysis:
   #   exclude_centromere_telomere: true
   #   max_segments: 2000
   # PQ needs no config: it QC's every p-value set the run has produced.
-  # ABS: absolute copy-number extension (needs raw SNP6 logR/BAF + R/ASCAT).
+  # ABS: absolute copy-number extension.  ASCAT itself runs on a SERVER
+  # (R/absolute_cn.R + scripts/prepare_abs_inputs.py); this package only
+  # reads the two harmonized tables it emits — run book + frozen schema:
+  # docs/ascat_handoff.md.
   # absolute_cn:
   #   tool: ascat
+  #   auto_run: false              # local default: never shell out to R/ASCAT;
+  #                                # true = run R/absolute_cn.R here when the
+  #                                # tables are missing (server convenience)
+  #   tables_dir:                  # where the two tables live, if not next to
+  #                                # each cohort's GISTIC outputs
   #   raw_dir: raw_snp6/           # marker-level logR/BAF dir (vs data_root)
   #   manifest: absolute_manifest.tsv
   #   # manifest columns: sample, cohort, logr, baf
